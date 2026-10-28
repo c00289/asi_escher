@@ -1,0 +1,141 @@
+"""Text measurement + node sizing shared by layout and renderer.
+
+All geometry is in "pixels": one data unit is one pixel at 100 dpi.  Text is
+measured with matplotlib's TextPath using the bundled DejaVu Sans font, so
+sizes are identical on every machine regardless of installed system fonts.
+"""
+from __future__ import annotations
+
+import textwrap
+from functools import lru_cache
+
+from matplotlib.font_manager import FontProperties
+from matplotlib.textpath import TextPath
+
+from .model import Edge, Node
+
+FONT_PX = 12.5            # body text height in px
+SMALL_PX = 10.5           # edge labels / stereotypes
+TITLE_PX = 13.5           # block names
+FONT_FAMILY = "DejaVu Sans"
+LINE_H = FONT_PX * 1.3
+
+WRAP_WIDTH = 24           # characters per line for action-like nodes
+WRAP_WIDTH_DECISION = 20
+
+_prop = FontProperties(family=FONT_FAMILY)
+_prop_b = FontProperties(family=FONT_FAMILY, weight="bold")
+
+# UML stereotype shown on requirement-relationship edges
+EDGE_STEREOTYPES = {
+    "satisfy": "satisfy", "derive": "deriveReqt", "verify": "verify",
+    "refine": "refine", "allocate": "allocate",
+}
+
+# Edge kinds drawn as dashed lines whatever the author's ``style`` (UML
+# dependencies and the requirement relationships); shared by the renderer
+# and the exporters.
+DASHED_EDGE_KINDS = ("dependency", "satisfy", "derive", "verify", "refine", "allocate")
+
+
+def pt(px: float) -> float:
+    """px -> matplotlib points (for fontsize) at 100 dpi."""
+    return px * 72.0 / 100.0
+
+
+@lru_cache(maxsize=4096)
+def text_width(s: str, size: float = FONT_PX, bold: bool = False) -> float:
+    if not s:
+        return 0.0
+    tp = TextPath((0, 0), s, size=size, prop=_prop_b if bold else _prop)
+    bb = tp.get_extents()
+    return float(bb.width) + size * 0.15
+
+
+def text_box(s: str, size: float = FONT_PX, bold: bool = False) -> tuple[float, float]:
+    """(width, height) of a possibly multi-line string."""
+    lines = s.split("\n") if s else [""]
+    w = max(text_width(line, size, bold) for line in lines)
+    return w, len(lines) * size * 1.3
+
+
+def wrap(label: str, width: int = WRAP_WIDTH) -> list[str]:
+    """Wrap ``label`` to ``width`` characters, honouring explicit newlines."""
+    lines = []
+    for para in label.split("\n"):
+        lines.extend(textwrap.wrap(para, width=width) or [""])
+    return lines
+
+
+def block_width(lines: list[str], size: float = FONT_PX) -> float:
+    return max((text_width(line, size) for line in lines), default=0.0)
+
+
+def edge_label(e: Edge) -> str:
+    """Text drawn on an edge: the stereotype (if any) plus the author's label."""
+    stereo = EDGE_STEREOTYPES.get(e.kind)
+    if stereo is None:
+        return e.label
+    return f"«{stereo}»" + (f"\n{e.label}" if e.label else "")
+
+
+def size_node(n: Node) -> tuple[float, float]:
+    """Return (w, h) for a node based on its kind and label.
+
+    Also fills ``n.lines`` with the wrapped label the renderer will draw; the
+    author's ``n.label`` is left untouched.
+    """
+    k = n.kind
+    n.lines = []
+    if k == "dummy":
+        return 0.0, 0.0
+    if k == "start":
+        return 22.0, 22.0
+    if k in ("end", "flowfinal"):
+        return 28.0, 28.0
+    if k == "merge":
+        return 26.0, 26.0
+    if k in ("fork", "join"):
+        return 120.0, 7.0
+    if k in ("block", "requirement", "part", "object"):
+        n.lines = n.label.split("\n")
+        return _size_block(n)
+
+    lines = wrap(n.label, WRAP_WIDTH_DECISION if k == "decision" else WRAP_WIDTH)
+    n.lines = lines
+    tw = block_width(lines)
+    th = len(lines) * LINE_H
+    if k == "decision":
+        # diamond: inscribed text needs ~2x the box
+        w = max(90.0, tw * 1.6 + 30)
+        h = max(56.0, th * 1.8 + 20)
+        return w, h
+    if k == "note":
+        return max(90.0, tw + 30), th + 22
+    if k == "io":
+        return max(100.0, tw + 50), th + 22
+    if k == "document":
+        return max(100.0, tw + 30), th + 30
+    if k == "database":
+        return max(90.0, tw + 30), th + 34
+    if k == "state":
+        return max(100.0, tw + 36), th + 26
+    # action / process (default)
+    return max(96.0, tw + 30), th + 24
+
+
+def _size_block(n: Node) -> tuple[float, float]:
+    name_lines = n.lines
+    widths = [text_width(line, TITLE_PX, bold=True) for line in name_lines]
+    if n.stereotype:
+        widths.append(text_width(f"«{n.stereotype}»", SMALL_PX))
+    h = 10 + (SMALL_PX * 1.3 if n.stereotype else 0) + len(name_lines) * TITLE_PX * 1.35 + 8
+    for title, lines in n.compartments:
+        if title:
+            widths.append(text_width(title, SMALL_PX))
+            h += SMALL_PX * 1.4
+        for line in lines:
+            widths.append(text_width(line, FONT_PX))
+        h += len(lines) * LINE_H + 8
+    w = max(110.0, max(widths) + 28)
+    return w, max(44.0, h)

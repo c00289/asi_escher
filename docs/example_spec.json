@@ -1,0 +1,203 @@
+{
+  "title": "Emergency Stop Handling",
+  "kind": "activity",
+  "direction": "TB",
+  "lanes": [
+    {
+      "id": "op",
+      "title": "Operator"
+    },
+    {
+      "id": "auto",
+      "title": "Autonomy Controller"
+    },
+    {
+      "id": "safe",
+      "title": "Safety Controller"
+    },
+    {
+      "id": "mach",
+      "title": "Machine Platform"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "label": "",
+      "kind": "start",
+      "lane": "op"
+    },
+    {
+      "id": "press",
+      "label": "Press E-stop",
+      "kind": "action",
+      "lane": "op"
+    },
+    {
+      "id": "detect",
+      "label": "Read dual-channel E-stop input",
+      "kind": "action",
+      "lane": "safe"
+    },
+    {
+      "id": "agree",
+      "label": "Channels agree?",
+      "kind": "decision",
+      "lane": "safe"
+    },
+    {
+      "id": "disc",
+      "label": "Flag channel discrepancy",
+      "kind": "action",
+      "lane": "safe"
+    },
+    {
+      "id": "inhibit",
+      "label": "Open drive inhibit relay",
+      "kind": "action",
+      "lane": "safe"
+    },
+    {
+      "id": "f1",
+      "label": "",
+      "kind": "fork",
+      "lane": "safe"
+    },
+    {
+      "id": "pilot",
+      "label": "Cut hydraulic pilot pressure",
+      "kind": "action",
+      "lane": "mach"
+    },
+    {
+      "id": "brake",
+      "label": "Apply park brake",
+      "kind": "action",
+      "lane": "mach"
+    },
+    {
+      "id": "safestop",
+      "label": "Transition to SAFE_STOP state",
+      "kind": "action",
+      "lane": "auto"
+    },
+    {
+      "id": "j1",
+      "label": "",
+      "kind": "join",
+      "lane": "safe"
+    },
+    {
+      "id": "ack",
+      "label": "Acknowledge and reset E-stop",
+      "kind": "action",
+      "lane": "op"
+    },
+    {
+      "id": "verify",
+      "label": "Verify reset conditions",
+      "kind": "action",
+      "lane": "safe"
+    },
+    {
+      "id": "ok",
+      "label": "Safe to resume?",
+      "kind": "decision",
+      "lane": "safe"
+    },
+    {
+      "id": "standby",
+      "label": "Resume STANDBY mode",
+      "kind": "action",
+      "lane": "auto"
+    },
+    {
+      "id": "end",
+      "label": "",
+      "kind": "end",
+      "lane": "auto"
+    }
+  ],
+  "edges": [
+    {
+      "src": "start",
+      "dst": "press"
+    },
+    {
+      "src": "press",
+      "dst": "detect"
+    },
+    {
+      "src": "detect",
+      "dst": "agree"
+    },
+    {
+      "src": "agree",
+      "dst": "inhibit",
+      "label": "yes"
+    },
+    {
+      "src": "agree",
+      "dst": "disc",
+      "label": "no"
+    },
+    {
+      "src": "disc",
+      "dst": "inhibit"
+    },
+    {
+      "src": "inhibit",
+      "dst": "f1"
+    },
+    {
+      "src": "f1",
+      "dst": "pilot"
+    },
+    {
+      "src": "f1",
+      "dst": "brake"
+    },
+    {
+      "src": "f1",
+      "dst": "safestop"
+    },
+    {
+      "src": "pilot",
+      "dst": "j1"
+    },
+    {
+      "src": "brake",
+      "dst": "j1"
+    },
+    {
+      "src": "safestop",
+      "dst": "j1"
+    },
+    {
+      "src": "j1",
+      "dst": "ack"
+    },
+    {
+      "src": "ack",
+      "dst": "verify"
+    },
+    {
+      "src": "verify",
+      "dst": "ok"
+    },
+    {
+      "src": "ok",
+      "dst": "standby",
+      "label": "yes"
+    },
+    {
+      "src": "ok",
+      "dst": "verify",
+      "label": "no"
+    },
+    {
+      "src": "standby",
+      "dst": "end"
+    }
+  ]
+}

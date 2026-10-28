@@ -1,0 +1,54 @@
+[project]
+name = "asi_escher"
+version = "0.1.1"
+description = "Pure-Python diagram generator: activity, flowchart, state and SysML block diagrams to PNG, SVG, DOT and Mermaid"
+readme = "README.md"
+authors = [
+    { name = "Roy Mendoza", email = "c00289@contractor.asirobots.com" }
+]
+requires-python = ">=3.13"
+keywords = ["diagram", "flowchart", "activity-diagram", "state-machine", "sysml", "graphviz", "mermaid", "layout"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Software Development :: Documentation",
+    "Typing :: Typed",
+]
+dependencies = [
+    "matplotlib>=3.11.2",
+    "pillow>=13.0.0",
+]
+
+[project.scripts]
+asi-escher = "asi_escher.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::asi_escher.layout.LayoutWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E701"]   # one-line shorthand constructors in model.py
+
+[tool.uv]
+# OneDrive refuses hardlinks from the uv cache; copy instead so `uv sync` just works here
+link-mode = "copy"
