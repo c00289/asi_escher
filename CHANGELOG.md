@@ -6,6 +6,30 @@ All notable changes to asi_escher are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-29
+
+### Changed
+
+- `examples.flowchart_lifecycle` is now `flowchart_fusa_lifecycle`, the name
+  it is registered under in `EXAMPLES` and listed under in the README. No
+  sibling imported the function; the example name is unchanged.
+
+### Fixed
+
+- CHANGELOG compare links pointed at an `example.invalid` placeholder; they
+  now point at the GitHub repository. Versions 0.1.0 and 0.0.0 predate this
+  repository (its history starts at the `v0.1.1` tag) and have no tag here,
+  so their headings are unlinked.
+- README: the git-source example no longer says "once the repo has a remote";
+  it names the remote and pins `v0.1.2`.
+- The CI workflow comment said windows-latest was chosen so the GUI tests
+  could run under Tk; asi_escher has no GUI. The comment now gives the real
+  reason (the platform the sibling tools and Roy's machine use).
+- `tests/test_version.py` checks that `pyproject.toml`, the README version
+  line and git-source pin, the top CHANGELOG entry and
+  `asi_escher.__version__` agree, so a half-done bump fails the suite.
+- `test_cli_example` no longer takes a `capsys` fixture it never used.
+
 ## [0.1.1] - 2026-10-28
 
 ### Fixed
@@ -98,7 +122,6 @@ unversioned `pydraw` prototype.
 - Demo catalog moved into the package as `examples`; `demos/build_all.py`
   is a thin wrapper around `gallery`.
 
-[Unreleased]: https://example.invalid/asi-escher/compare/v0.1.1...HEAD
-[0.1.1]: https://example.invalid/asi-escher/compare/v0.1.0...v0.1.1
-[0.1.0]: https://example.invalid/asi-escher/compare/asi_pydraw-v0.0.0...v0.1.0
-[0.0.0]: https://example.invalid/asi-escher/releases/tag/asi_pydraw-v0.0.0
+[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/c00289/asi_escher/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/c00289/asi_escher/releases/tag/v0.1.1

@@ -5,7 +5,7 @@ One of the [ASI FuSa tools](https://github.com/c00289/c00289/blob/main/README.md
 Pure-Python diagram generator for engineering documentation. Describe a
 diagram in a few lines of Python (or a JSON file), and asi_escher lays it out
 and renders it to **PNG**, **SVG**, **Graphviz DOT** and **Mermaid**, with no
-Graphviz, Node or browser needed. Version **0.1.1**, alpha.
+Graphviz, Node or browser needed. Version **0.1.2**, alpha.
 
 Supported diagram families:
 
@@ -64,8 +64,8 @@ dependencies = ["asi-escher"]
 asi-escher = { path = "../asi_escher", editable = true }
 ```
 
-Once the repo has a remote, a pinned git source works the same way:
-`asi-escher = { git = "<url>", tag = "v0.1.1" }`.
+A pinned git source works the same way:
+`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.1.2" }`.
 
 This folder lives in OneDrive, which rejects the hardlinks uv normally makes
 from its cache; `pyproject.toml` therefore sets `tool.uv.link-mode = "copy"`
