@@ -6,6 +6,67 @@ All notable changes to asi_escher are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-29
+
+Phase 1 of the control-structure plan (asi_dewey `docs/control-structure-plan.md`). The owner's ask: "we
+need to make control structures like the one in Roy's Brain [...] the user can export them to their folder
+of preference, selecting the format [...] drawio makes drawings by getting the positioning from the
+automatically positioned pydraw; the user can pick which of the formats they want; [...] the default must be
+drawio png"; "no drawio; generate the drawio file and we can use the VS Code preview to see it"; "when you
+make the diagrams please use OCR on the PNG so that the final diagrams are competent"; and, on the PNG and
+SVG being escher's pictures of the draw.io layout, "include a comment in the drawing".
+
+### Added
+
+- Diagram kind `control_structure` (STPA): a box has a title, a responsibility, an algorithms section
+  (orange) and a process model (blue); node kinds `controller`, `human_controller` (rounded),
+  `controlled_process` (double border), `environment` (dashed), `sensor` and `actuator` (small shapes),
+  `external_system`; edge kinds `control_action` (red, arrowhead down the hierarchy) and `feedback` (blue,
+  arrowhead up), each carrying numbered signals drawn one per label line; a note attached to a box floats
+  beside it. Builder: `controller()`, `control_action()`, `feedback()`, `note(..., attached_to=)`; the JSON
+  spec carries `responsibility`, `algorithms`, `process_model`, `attached_to` and `signals`.
+- Layout rules of the kind: top-down by hierarchy (feedback is laid out reversed beside the control action
+  it answers, then turned round), control actions keep the left of a pair of boxes and feedback the right,
+  their labels hang outward, so the two arrows between two boxes never overlap; `LayoutOptions.for_kind()`
+  gives a control structure wider gaps by default.
+- `to_drawio(diagram, provenance=True, name=None)`: the diagram as uncompressed mxGraph XML
+  (`compressed="false"`, cells 0 and 1), one vertex per box with the layout's x, y, width and height, the
+  sections as an HTML label in the renderer's colours, one edge per arrow with exit/entry constraints, the
+  routed points as `mxPoint` waypoints and the signal lines as its label placed where the layout put it;
+  swimlanes and the SysML frame as background rectangles; every diagram kind exports. It is the editable
+  master: draw.io or the VS Code draw.io extension opens it with every box where escher put it.
+- The format set `FORMATS = ("drawio", "png", "svg")` with `DEFAULT_FORMATS = ("drawio", "png")`, shared
+  with the sibling tools; `ALL_FORMATS` adds `dot` and `mmd`. `asi-escher export <spec.json> --out <dir>
+  [--format drawio|png|svg]... [--all]` writes `<slug>.drawio` / `.png` / `.svg`.
+- Provenance marks: the `.drawio` carries an XML comment after `<mxfile>` and a grey note cell under the
+  drawing, the PNG and SVG a grey footer line ("asi_escher 0.2.0, <date>; layout shared with
+  <slug>.drawio"), all saying the pictures are escher's renderings of the draw.io layout, not draw.io
+  exports; `provenance=False` (`--no-provenance`) switches them off.
+- The OCR quality gate (`asi_escher.ocr`): `ocr_check(png_path, expected) -> OcrReport` reads a PNG back
+  with the built-in Windows OCR engine (PowerShell 5.1 WinRT, no Tesseract) and checks every node title,
+  signal id and algorithm code with a tolerant match; `build(..., ocr=True)` and `--ocr` add the misses as
+  `LayoutIssue` entries of kind `ocr` and the report with its verdict ("competent" or the unreadable
+  labels) and OCR line count; `asi-escher verify <png> --expect LABEL...`; `expected_labels(diagram)`.
+  When the engine is unavailable the gate reports `ocr unavailable` and never fails a build. The gallery
+  runs it on every control structure; the suite asserts the demo is competent when the engine is there.
+- Bundled example `control_structure_demo` (synthetic: an operator, a site supervisor, a vehicle
+  controller, a safety supervisor on the stop path, the machine, a perception unit, the work site, a fleet
+  service; invented signals), `docs/control_structure_spec.json` and the README picture.
+- Tests: `test_control_structure.py`, `test_drawio.py`, `test_ocr.py` and `test_private_smoke.py` (runs
+  only when the owner's private datasets sit beside the repo; asserts counts and well-formed output,
+  nothing from the data).
+
+### Changed
+
+- `build()` writes `drawio` and `png` when `formats` is not given (it wrote png, svg, dot and mmd); callers
+  that name their formats, as asi_dewey and asi_kletz do, are unaffected. `asi-escher build` still writes
+  every format by default, now five.
+- `build_gallery()` takes `formats`, `provenance` and `ocr`; the index links the draw.io file and shows the
+  legibility verdict.
+- `pipeline.slug` lives in `asi_escher.provenance` (still importable from `pipeline`).
+- Algorithm lines in a control-structure box are set as `code name` with one space: a wider gap made the
+  OCR engine read the codes as a separate column and drop some of them.
+
 ## [0.1.3] - 2026-10-29
 
 ### Fixed
@@ -129,7 +190,8 @@ unversioned `pydraw` prototype.
 - Demo catalog moved into the package as `examples`; `demos/build_all.py`
   is a thin wrapper around `gallery`.
 
-[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/c00289/asi_escher/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/c00289/asi_escher/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/c00289/asi_escher/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/c00289/asi_escher/releases/tag/v0.1.1
