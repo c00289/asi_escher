@@ -216,7 +216,7 @@ def flowchart_calibration_loops() -> Diagram:
     return d
 
 
-def flowchart_lifecycle() -> Diagram:
+def flowchart_fusa_lifecycle() -> Diagram:
     d = Diagram("Functional Safety Lifecycle (ISO 25119 / ISO 13849)", "flowchart")
     d.start()
     d.node("concept", "Item definition and operating concept", "process")
@@ -447,7 +447,7 @@ EXAMPLES: list[tuple[str, Callable[[], Diagram]]] = [
     ("flowchart_fault_response", flowchart_fault_response),
     ("flowchart_pipeline_lr", flowchart_pipeline_lr),
     ("flowchart_calibration_loops", flowchart_calibration_loops),
-    ("flowchart_fusa_lifecycle", flowchart_lifecycle),
+    ("flowchart_fusa_lifecycle", flowchart_fusa_lifecycle),
     ("swimlanes_lr_dispatch", swimlanes_lr_dispatch),
     ("state_autonomy_modes", state_autonomy_modes),
     ("state_estop_channel", state_estop_channel),
