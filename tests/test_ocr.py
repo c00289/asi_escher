@@ -1,13 +1,14 @@
 """The OCR quality gate: the matcher, the unavailable path, build() and the CLI, and the demo's legibility."""
 import io
 import json
+import subprocess
 
 import pytest
 
 from asi_escher import Diagram, OcrReport, build, layout, ocr_check, render
 from asi_escher.cli import main
 from asi_escher.examples import control_structure_demo
-from asi_escher.ocr import _find, _token_stream, _tokens, recognize
+from asi_escher.ocr import _SCRIPT, _find, _token_stream, _tokens, recognize
 
 
 def _found(label, lines):
@@ -122,3 +123,44 @@ def test_demo_is_competent_under_real_ocr(ocr_engine, tmp_path):
     assert report.available and len(report.lines) > 40
     assert report.competent, report.verdict
     assert res["issues"] == []
+
+
+# ------------------------------------------------------------- UTF-8 ----
+def test_tokens_fold_accents_and_italic_confusions():
+    assert _tokens("• Café – Résumé") == ["cafe", "resume"]
+    assert _found("Café – open", ["Cafe - open"])
+    assert _found("human embedded", ["hutnan", "ernbedded"])                # an italic m
+
+
+def test_recognize_reads_the_powershell_output_as_utf8(monkeypatch, tmp_path):
+    png = tmp_path / "x.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    payload = b'{"available":true,"language":"en-US","lines":["\xe2\x80\xa2 Caf\xc3\xa9 \xe2\x80\x93 ouvert","Plain"]}'
+
+    def fake_run(args, **kw):
+        assert kw["encoding"] == "utf-8"
+        return subprocess.CompletedProcess(args, 0, stdout=payload.decode(kw["encoding"]), stderr="")
+
+    monkeypatch.setattr("asi_escher.ocr.shutil.which", lambda name: "powershell")
+    monkeypatch.setattr("asi_escher.ocr.os.name", "nt")
+    monkeypatch.setattr("asi_escher.ocr.subprocess.run", fake_run)
+    report = ocr_check(str(png), ["• Café – ouvert", "Plain", "Missing"])
+    assert report.available and report.lines == ["• Café – ouvert", "Plain"]
+    assert report.found == ["• Café – ouvert", "Plain"] and report.missing == ["Missing"]
+    assert json.loads(json.dumps(report.to_dict()))["found"][0] == "• Café – ouvert"
+    assert "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8" in _SCRIPT
+    assert "$OutputEncoding = [System.Text.Encoding]::UTF8" in _SCRIPT
+
+
+def test_non_ascii_labels_are_competent_under_real_ocr(ocr_engine, tmp_path):
+    if not ocr_engine:
+        pytest.skip("Windows OCR engine unavailable")
+    d = Diagram("Accents", "flowchart")
+    d.action("a", "• Start here")
+    d.action("b", "Café – open")
+    d.action("c", "Résumé of the day")
+    d.chain("a", "b", "c")
+    res = build(d, str(tmp_path), formats=("png",), ocr=True)
+    report = res["ocr"]
+    assert report.available and report.error is None
+    assert report.competent, report.verdict

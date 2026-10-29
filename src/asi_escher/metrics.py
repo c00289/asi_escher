@@ -25,6 +25,8 @@ WRAP_WIDTH_DECISION = 20
 WRAP_WIDTH_CONTROL = 42   # characters per line inside a control-structure box
 CONTROL_PAD = 10.0        # inner padding of a control-structure box
 CONTROL_SECTION_GAP = 5.0
+CONTROL_MIN_WIDTH = 150.0             # narrowest control-structure box ...
+CONTROL_WIDTH_PER_ALGORITHM = 12.0    # ... plus this much per algorithm line
 
 _prop = FontProperties(family=FONT_FAMILY)
 _prop_b = FontProperties(family=FONT_FAMILY, weight="bold")
@@ -117,7 +119,9 @@ def size_node(n: Node) -> tuple[float, float]:
         h = max(56.0, th * 1.8 + 20)
         return w, h
     if k == "note":
-        return max(90.0, tw + 30), th + 22
+        # a note floating beside a control-structure box gets more room under
+        # its italic text: the OCR engine drops a last line set tight on the border
+        return max(90.0, tw + 30), th + (30 if n.attached_to is not None else 22)
     if k == "io":
         return max(100.0, tw + 50), th + 22
     if k == "document":
@@ -190,4 +194,7 @@ def _size_control(n: Node) -> tuple[float, float]:
     h += CONTROL_PAD * 0.6 if sections else 0.0
     if n.kind in ("sensor", "actuator") and not sections:
         return max(96.0, max(widths) + 36), max(36.0, h)
-    return max(150.0, max(widths) + 2 * CONTROL_PAD + 6), max(44.0, h)
+    # a box with many algorithms is a busy one: the wider it is, the further
+    # apart the arrows on its edge and the more room their signal stacks get
+    min_w = CONTROL_MIN_WIDTH + CONTROL_WIDTH_PER_ALGORITHM * len(n.algorithms)
+    return max(min_w, max(widths) + 2 * CONTROL_PAD + 6), max(44.0, h)

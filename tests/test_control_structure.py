@@ -187,3 +187,142 @@ def test_mermaid_export_of_the_kind():
 def test_expected_labels_of_a_control_structure():
     labels = expected_labels(_pair())
     assert labels == ["Top Controller", "T1", "T2", "Top model", "Low Process", "CA-01", "CA-02", "FB-01"]
+
+
+# ---------------------------------------------------------------- tiers ----
+def _peers():
+    """Two operators side by side (all names invented): the yard operator asks
+    the desk operator for a hold (a lateral request) and otherwise commands
+    the task executor and the rig, both of them under the desk operator's
+    planner."""
+    d = Diagram("Peers", "control_structure")
+    d.controller("room", "Desk Operator", kind="human_controller")
+    d.controller("field", "Yard Operator", kind="human_controller")
+    d.controller("source", "Plan Feed", kind="external_system")
+    d.controller("supervisor", "Task Planner")
+    d.controller("stop", "Halt Path")
+    d.controller("vehicle", "Task Executor")
+    d.controller("machine", "Rig", kind="controlled_process")
+    d.controller("site", "Yard", kind="environment")
+    d.control_action("field", "room", ["CA-70 Hold request"])
+    d.feedback("room", "field", ["FB-70 Hold taken"])
+    d.control_action("field", "vehicle", ["CA-71 Yard halt"])
+    d.control_action("field", "machine", ["CA-72 Rig brake"])
+    d.control_action("source", "supervisor", ["CA-73 Plan data"])
+    d.control_action("room", "supervisor", ["CA-74 Task order"])
+    d.control_action("room", "stop", ["CA-75 Halt order"])
+    d.control_action("supervisor", "vehicle", ["CA-76 Task command"])
+    d.control_action("stop", "vehicle", ["CA-77 Halt activation"])
+    d.control_action("vehicle", "machine", ["CA-78 Drive demand"])
+    d.feedback("machine", "vehicle", ["FB-78 Rig state"])
+    d.feedback("vehicle", "supervisor", ["FB-76 Task state"])
+    d.feedback("site", "vehicle", ["FB-80 Scene cue"])
+    d.feedback("site", "room", ["FB-81 Scene cue"])
+    return d
+
+
+def test_peers_share_the_top_layer():
+    d = Diagram("Two peers", "control_structure")
+    d.controller("a", "Operator A", kind="human_controller")
+    d.controller("b", "Operator B", kind="human_controller")
+    d.controller("c", "Controller")
+    d.control_action("a", "c", ["CA-01 Go"])
+    d.control_action("b", "c", ["CA-02 Stop"])
+    layout(d)
+    n = d.nodes
+    assert n["a"].layer == n["b"].layer == 0 and n["a"].y == pytest.approx(n["b"].y)
+    assert n["c"].layer == 1 and n["c"].y > n["a"].y
+    assert d.issues == []
+
+
+def test_box_reached_from_two_layers_sits_below_both():
+    d = Diagram("Deep", "control_structure")
+    d.controller("top", "Top")
+    d.controller("mid", "Middle")
+    d.controller("low", "Low")
+    d.control_action("top", "mid", ["CA-01 A"])
+    d.control_action("mid", "low", ["CA-02 B"])
+    d.control_action("top", "low", ["CA-03 C"])
+    layout(d)
+    assert [d.nodes[k].layer for k in ("top", "mid", "low")] == [0, 1, 2]
+    # commanding the receiver's own subordinate is a superior's bypass; only
+    # a sender reaching past the receiver's subordinates is its peer
+    d = Diagram("Deeper", "control_structure")
+    for k in ("top", "mid", "low", "proc"):
+        d.controller(k, k.title())
+    d.control_action("top", "mid", ["CA-01 A"])
+    d.control_action("mid", "low", ["CA-02 B"])
+    d.control_action("low", "proc", ["CA-03 C"])
+    d.control_action("top", "proc", ["CA-04 D"])
+    layout(d)
+    assert [d.nodes[k].layer for k in ("top", "mid", "low", "proc")] == [0, 0, 1, 2]
+
+
+def test_lateral_request_keeps_peers_level_and_runs_sideways():
+    d = _peers()
+    layout(d)
+    n = d.nodes
+    tiers = {}
+    for k in ("room", "field", "source", "supervisor", "stop", "vehicle", "machine", "site"):
+        tiers.setdefault(n[k].layer, set()).add(k)
+    assert tiers == {0: {"room", "field", "source"}, 1: {"supervisor", "stop"}, 2: {"vehicle"},
+                     3: {"machine", "site"}}
+    assert n["room"].y == pytest.approx(n["field"].y)
+    request = next(e for e in d.edges if (e.src, e.dst) == ("field", "room"))
+    answer = next(e for e in d.edges if (e.src, e.dst) == ("room", "field"))
+    left, right = sorted((n["room"], n["field"]), key=lambda b: b.x)
+    for e in (request, answer):
+        assert len(e.points) == 2 and e.points[0][1] == pytest.approx(e.points[1][1])   # horizontal
+        xs = sorted(x for x, _ in e.points)
+        assert xs[0] == pytest.approx(left.right) and xs[1] == pytest.approx(right.left)
+    assert request.points[0][1] < answer.points[0][1]                 # the request above its answer
+    assert request.label_pos[1] < request.points[0][1] < answer.points[0][1] < answer.label_pos[1]
+    assert n["machine"].y == pytest.approx(n["site"].y)               # the bottom tier
+    assert d.width >= 0.8 * d.height
+    assert d.issues == []
+
+
+def test_feedback_never_moves_a_box():
+    d = _peers()
+    layout(d)
+    layers = {k: n.layer for k, n in d.nodes.items() if n.kind != "dummy"}
+    quiet = _peers()
+    quiet.edges = [e for e in quiet.edges if e.kind != "feedback"]
+    layout(quiet)
+    for k, n in quiet.nodes.items():
+        if n.kind != "dummy" and k != "site":
+            assert n.layer == layers[k], k                         # the hierarchy alone decides
+    # a box that only reports sits below the boxes it reports to, one that
+    # only listens just above the nearest box it hears from
+    demo = control_structure_demo()
+    layout(demo)
+    n = demo.nodes
+    assert n["perception"].layer == n["vehicle"].layer + 1
+    assert n["fleet"].layer == n["vehicle"].layer - 1 and n["fleet"].layer > n["operator"].layer
+    assert n["environment"].layer == max(b.layer for b in demo.real_nodes())
+
+
+def test_demo_is_wide_and_its_labels_never_overlap():
+    d = control_structure_demo()
+    layout(d)
+    assert d.width >= 0.8 * d.height
+    assert [i for i in d.issues if i.kind == "label_overlap"] == []
+    assert d.issues == []
+    assert len({n.layer for n in d.real_nodes() if n.kind != "note"}) == 5
+
+
+def test_lateral_edge_gets_room_for_its_label():
+    d = Diagram("Wide request", "control_structure")
+    d.controller("a", "A", kind="human_controller")
+    d.controller("b", "B", kind="human_controller")
+    d.controller("c", "C")
+    d.controller("p", "Process", kind="controlled_process")
+    d.control_action("a", "b", ["CA-01 A very long request name that needs a wide channel between the peers"])
+    d.control_action("a", "p", ["CA-02 Go"])
+    d.control_action("b", "c", ["CA-03 Go"])
+    d.control_action("c", "p", ["CA-04 Go"])
+    layout(d)
+    e = d.edges[0]
+    assert d.nodes["a"].layer == d.nodes["b"].layer
+    assert abs(e.points[1][0] - e.points[0][0]) > LayoutOptions.for_kind("control_structure").nodesep
+    assert d.issues == []

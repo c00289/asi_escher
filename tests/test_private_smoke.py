@@ -2,8 +2,8 @@
 
 The datasets live in the private asi_standards repository beside this one;
 when that folder is absent (CI, any other machine) the test skips.  Nothing
-from the datasets is asserted or printed: only counts and that the outputs
-are well-formed.
+from the datasets is asserted or printed: only counts, the tier shape, that
+the outputs are well-formed and the OCR verdict.
 """
 import io
 import json
@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from asi_escher import Diagram, LayoutWarning, layout, render, to_drawio
+from asi_escher import Diagram, LayoutWarning, layout, ocr_check, render, to_drawio
+from asi_escher.ocr import expected_labels
 
 DATASETS = Path(__file__).resolve().parents[2] / "asi_standards" / "control-structures" / "wheel-loader" / "datasets"
 
@@ -55,9 +56,16 @@ def test_private_structure_builds_renders_and_exports(tmp_path):
     assert sum(len(n.algorithms) for n in boxes) == 30
     assert sum(len(n.process_model[1]) for n in boxes if n.process_model) == 18
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", LayoutWarning)      # a dense structure may report issues; not asserted
+        warnings.simplefilter("error", LayoutWarning)       # since 0.2.1 the structure lays out without any issue
         layout(d)
     assert all(e.points for e in d.edges) and d.width > 0 and d.height > 0
+    assert [i for i in d.issues if i.kind == "label_overlap"] == [] and d.issues == []
+    tiers = {}
+    for n in boxes:
+        tiers[n.layer] = tiers.get(n.layer, 0) + 1
+    assert sorted(tiers) == [0, 1, 2, 3]                                 # four tiers:
+    assert [tiers[k] for k in sorted(tiers)] == [3, 2, 1, 2]             # the peers and the data source; the
+    assert d.width >= 0.75 * d.height                                    # supervisor and the stop path; the
     png, svg = io.BytesIO(), io.BytesIO()
     render(d, png=png, svg=svg)
     assert png.getvalue()[:8] == b"\x89PNG\r\n\x1a\n" and b"<svg" in svg.getvalue()
@@ -68,3 +76,18 @@ def test_private_structure_builds_renders_and_exports(tmp_path):
     assert sum(1 for c in cells if c.get("vertex") == "1" and c.get("id") != "provenance") == 9   # 8 boxes + 1 note
     assert sum(1 for c in cells if c.get("edge") == "1") == 21
     assert sum(len(c.get("value").split("<br>")) for c in cells if c.get("edge") == "1") == 58
+
+
+
+def test_private_structure_is_competent_under_real_ocr(tmp_path):
+    d = _private_structure()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", LayoutWarning)
+        layout(d)
+    png = tmp_path / "private.png"
+    render(d, png=str(png))
+    report = ocr_check(str(png), expected_labels(d))
+    if not report.available:
+        pytest.skip("Windows OCR engine unavailable")
+    assert len(report.expected) > 60 and len(report.lines) > 150
+    assert report.competent, f"{len(report.missing)} label(s) unreadable"

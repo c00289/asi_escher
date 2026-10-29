@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict, deque
 
 from .metrics import SMALL_PX, edge_label, size_node, text_box, text_width
-from .model import Diagram, Edge, LayoutIssue, Node
+from .model import CONTROL_NODE_KINDS, Diagram, Edge, LayoutIssue, Node
 
 
 class LayoutWarning(UserWarning):
@@ -53,7 +53,7 @@ class LayoutOptions:
         the control action it answers.
         """
         if kind == "control_structure":
-            return cls(ranksep=96.0, nodesep=120.0)
+            return cls(ranksep=110.0, nodesep=160.0)
         return cls()
 
 
@@ -96,13 +96,25 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
             e.back = e.kind == "feedback" and e.src != e.dst
     _find_back_edges(d)
     reversed_edges = _reverse_back_edges(d) if control else []
-    _assign_layers(d)
+    if control:
+        _assign_control_layers(d, reversed_edges)
+    else:
+        _assign_layers(d)
     _insert_dummies(d)
     layers, preds, succs = _order(d, opts)
-    _assign_coordinates(d, layers, preds, succs, opts)
-    _route_edges(d, layers, opts)
-    _attach_notes(d, order, attached, opts)
-    boxes = _place_labels(d, swap=d.direction == "LR")
+    lateral_gaps = _lateral_gaps(d, opts) if control else None
+    grow = [0.0] * len(layers)
+    for _attempt in range(_CHANNEL_ATTEMPTS if control else 1):
+        _assign_coordinates(d, layers, preds, succs, opts, lateral_gaps, grow)
+        _route_edges(d, layers, opts)
+        _attach_notes(d, order, attached, opts)
+        d.issues = []
+        boxes = _place_labels(d, swap=d.direction == "LR")
+        # a control structure's channel between two tiers grows until the
+        # signal stacks in it fit, then the layout is redone
+        if not control or not _grow_channels(d, layers, grow):
+            break
+        order, attached = _detach_notes(d)
     _check_edge_crossings(d)
     _normalize(d, opts, boxes)
     for e in reversed_edges:
@@ -110,6 +122,9 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
         e.path.reverse()
         e.points.reverse()
         e.back = True
+        for issue in d.issues:
+            if issue.edge == (e.dst, e.src):
+                issue.edge = (e.src, e.dst)
     if d.direction == "LR":
         _transpose(d)
     if d.issues:
@@ -201,6 +216,133 @@ def _assign_layers(d: Diagram) -> None:
         n.layer = layer[nid]
 
 
+def _control_actions(d: Diagram) -> list[Edge]:
+    """The control actions of the hierarchy (forward, between two boxes)."""
+    return [e for e in d.edges if e.kind == "control_action" and not e.back and e.src != e.dst]
+
+
+def _lateral_edges(d: Diagram) -> set[int]:
+    """Ids of the control actions that are requests between peers, not steps
+    down the hierarchy.
+
+    A control action from one controller to another is lateral when the
+    sender's every other control action reaches past the receiver's own
+    subordinates into the receiver's domain (the boxes the receiver controls
+    through others): the sender is then not above the receiver but beside
+    it, working the same boxes from another side.  A field operator who asks
+    the control-room operator for a stop and otherwise commands the vehicle
+    controller and the machine, both of them under the control-room
+    operator's supervisor, is such a peer.  A sender with no other control
+    action, or one that commands a direct subordinate of the receiver (an
+    operator who commands the automation and, past it, the process the
+    automation commands), is a plain superior.
+    """
+    actions = _control_actions(d)
+    targets = defaultdict(list)
+    for e in actions:
+        targets[e.src].append(e.dst)
+
+    def domain(v: str) -> set[str]:
+        seen: set[str] = set()
+        stack = [v]
+        while stack:
+            u = stack.pop()
+            for w in targets[u]:
+                if w not in seen:
+                    seen.add(w)
+                    stack.append(w)
+        return seen
+
+    lateral = set()
+    for e in actions:
+        others = {t for t in targets[e.src] if t != e.dst}
+        if others and others <= domain(e.dst) and not others & set(targets[e.dst]):
+            lateral.add(id(e))
+    return lateral
+
+
+def _assign_control_layers(d: Diagram, reversed_edges: list) -> None:
+    """Layering of a control structure: the control hierarchy decides.
+
+    A box sits one layer below the deepest of its control-action sources; a
+    box with no control-action source is a top-level peer of the others and
+    shares layer 0 with them; a box reached from two layers sits below both.
+    A lateral control action (:func:`_lateral_edges`) keeps its two ends on
+    one level.  Feedback never moves a box that takes part in the hierarchy;
+    a box that only reports (a sensor, the environment) sits below the boxes
+    it reports to, a box that only listens (an external system taking
+    reports) just above the nearest box it hears from, and the environment
+    at the bottom.  A reversed feedback edge the layering would send upward
+    is given back the author's direction (then it points down the drawing).
+    """
+    lateral = _lateral_edges(d)
+    has_ca = set()
+    for e in _control_actions(d):
+        has_ca.update((e.src, e.dst))
+    forward = [e for e in d.edges if not e.back and e.src != e.dst]
+    succs = defaultdict(list)
+    indeg = {nid: 0 for nid in d.nodes}
+    for e in forward:
+        succs[e.src].append(e)
+        indeg[e.dst] += 1
+
+    def weight(e: Edge):
+        """Layers between the ends of ``e`` (None: the edge does not rank)."""
+        if e.kind == "control_action":
+            return 0 if id(e) in lateral else 1
+        if e.kind == "feedback":
+            return None if e.dst in has_ca else 1
+        return 1
+
+    layer = {nid: 0 for nid in d.nodes}
+    queue = deque(nid for nid in d.nodes if indeg[nid] == 0)
+    while queue:
+        u = queue.popleft()
+        for e in succs[u]:
+            w = weight(e)
+            if w is not None:
+                layer[e.dst] = max(layer[e.dst], layer[u] + w)
+            indeg[e.dst] -= 1
+            if indeg[e.dst] == 0:
+                queue.append(e.dst)
+    ranked = {e.dst for e in forward if weight(e) is not None}
+    for nid in d.nodes:
+        if nid in has_ca or nid in ranked or not succs[nid]:
+            continue
+        layer[nid] = max(0, min(layer[e.dst] for e in succs[nid]) - 1)
+    bottom = max((layer[nid] for nid, n in d.nodes.items() if n.kind != "environment"), default=0)
+    for nid, n in d.nodes.items():
+        if n.kind == "environment" and not any(e.kind == "control_action" for e in succs[nid]):
+            below = min((layer[e.dst] - 1 for e in succs[nid]), default=bottom)
+            layer[nid] = max(layer[nid], min(bottom, below))
+    for nid, n in d.nodes.items():
+        n.layer = layer[nid]
+    for e in list(reversed_edges):
+        if d.nodes[e.src].layer > d.nodes[e.dst].layer:
+            e.src, e.dst = e.dst, e.src
+            reversed_edges.remove(e)
+
+
+def _is_lateral(d: Diagram, e: Edge) -> bool:
+    """True for a forward edge between two boxes of one layer (drawn sideways)."""
+    return not e.back and e.src != e.dst and d.nodes[e.src].layer == d.nodes[e.dst].layer
+
+
+def _lateral_gaps(d: Diagram, opts: LayoutOptions) -> dict:
+    """Extra separation between the two ends of a lateral edge so its label
+    fits on the horizontal arrow between them, keyed by both ``(a, b)`` orders."""
+    extra: dict = {}
+    for e in d.edges:
+        text = edge_label(e)
+        if not text or not _is_lateral(d, e):
+            continue
+        need = text_box(text, SMALL_PX)[0] + 2 * _LABEL_PAD + 24 - opts.nodesep
+        if need > 0:
+            for key in ((e.src, e.dst), (e.dst, e.src)):
+                extra[key] = max(extra.get(key, 0.0), need)
+    return extra
+
+
 def _insert_dummies(d: Diagram) -> None:
     counter = 0
     for e in d.edges:
@@ -227,7 +369,7 @@ def _order(d: Diagram, opts: LayoutOptions):
     succs = defaultdict(list)
     preds = defaultdict(list)
     for e in d.edges:
-        if e.back or e.src == e.dst:
+        if e.back or e.src == e.dst or _is_lateral(d, e):
             continue
         for a, b in zip(e.path, e.path[1:], strict=False):
             succs[a].append(b)
@@ -289,6 +431,19 @@ def _order(d: Diagram, opts: LayoutOptions):
     for layer_nodes in layers:
         layer_nodes.sort(key=lambda nid: (lane_key(nid), pos[nid]))
     refresh()
+    if not d.lanes:
+        # the two ends of a lateral edge stand side by side so the arrow
+        # between them crosses nothing
+        for e in d.edges:
+            if not _is_lateral(d, e):
+                continue
+            layer_nodes = layers[d.nodes[e.src].layer]
+            i, j = layer_nodes.index(e.src), layer_nodes.index(e.dst)
+            if abs(i - j) > 1:
+                layer_nodes.pop(j)
+                i = layer_nodes.index(e.src)
+                layer_nodes.insert(i + 1 if j > i else i, e.dst)
+        refresh()
     for layer_nodes in layers:
         for i, nid in enumerate(layer_nodes):
             d.nodes[nid].order = i
@@ -303,23 +458,52 @@ def _gap_for_labels(d: Diagram, nlayers: int) -> list[float]:
     between two columns; in top-to-bottom diagrams label height is small.
     """
     swap = d.direction == "LR"
+    control = d.kind == "control_structure"
     need = [0.0] * nlayers
     for e in d.edges:
-        if e.back or e.src == e.dst:
+        if e.back or e.src == e.dst or _is_lateral(d, e):
             continue
         text = edge_label(e)
         if not text:
             continue
         w, h = text_box(text, SMALL_PX)
         extent = (w if swap else h) + 2 * _LABEL_PAD + 12
+        if control:
+            # the stack hangs beside the vertical run below the jog (_CONTROL_JOG)
+            extent += _CONTROL_JOG + 16
         li = d.nodes[e.src].layer
         need[li] = max(need[li], extent)
     return need
 
 
-def _assign_coordinates(d: Diagram, layers, preds, succs, opts: LayoutOptions) -> None:
+_CHANNEL_ATTEMPTS = 4     # layouts of a control structure with growing channels
+
+
+def _grow_channels(d: Diagram, layers, grow: list) -> bool:
+    """Widen the channel under every layer whose signal stacks overlapped, by
+    the height of the overlapping label; True when any channel grew."""
+    tops = [min((d.nodes[n].top for n in layer_nodes), default=0.0) for layer_nodes in layers]
+    grown = False
+    for issue in d.issues:
+        if issue.kind != "label_overlap" or issue.edge is None:
+            continue
+        e = next((e for e in d.edges if (e.src, e.dst) == issue.edge), None)
+        if e is None or e.label_pos is None or e.src == e.dst or e.back:
+            continue
+        li = max((i for i, top in enumerate(tops) if top <= e.label_pos[1]), default=0)
+        if li >= len(layers) - 1:
+            continue
+        grow[li] += text_box(edge_label(e), SMALL_PX)[1] + 2 * _LABEL_PAD
+        grown = True
+    return grown
+
+
+def _assign_coordinates(d: Diagram, layers, preds, succs, opts: LayoutOptions, extra=None,
+                        grow=None) -> None:
     nodes = d.nodes
     gaps = _gap_for_labels(d, len(layers))
+    if grow:
+        gaps = [g + extra_gap for g, extra_gap in zip(gaps, grow, strict=True)]
     y = opts.margin + (opts.lane_header if (d.lanes and d.direction == "TB") else 0) + 10
     for li, layer_nodes in enumerate(layers):
         hmax = max((nodes[n].h for n in layer_nodes), default=0.0)
@@ -335,15 +519,19 @@ def _assign_coordinates(d: Diagram, layers, preds, succs, opts: LayoutOptions) -
     if d.lanes:
         _lane_coordinates(d, layers, preds, succs, opts)
     else:
-        _free_coordinates(d, layers, preds, succs, opts)
+        _free_coordinates(d, layers, preds, succs, opts, extra)
 
 
-def _pack(ids, nodes, gap, start=0.0):
+def _pack(ids, nodes, gap, start=0.0, extra=None):
     x = start
+    prev = None
     for nid in ids:
         n = nodes[nid]
+        if prev is not None and extra:
+            x += extra.get((prev, nid), 0.0)
         n.x = x + n.w / 2
         x += n.w + gap
+        prev = nid
     return x - gap
 
 
@@ -368,9 +556,11 @@ def _components(d: Diagram, preds, succs) -> list[list[str]]:
     return comps
 
 
-def _balance(layers, nodes, preds, succs, gap, rounds=24) -> None:
+def _balance(layers, nodes, preds, succs, gap, rounds=24, extra=None) -> None:
     """Iteratively move nodes toward the mean x of their neighbours while
-    keeping the in-layer order and minimum separation."""
+    keeping the in-layer order and minimum separation (``extra`` adds to the
+    separation of a named pair of neighbours)."""
+    extra = extra or {}
     for rnd in range(rounds):
         order = range(len(layers)) if rnd % 2 == 0 else range(len(layers) - 1, -1, -1)
         for li in order:
@@ -389,7 +579,7 @@ def _balance(layers, nodes, preds, succs, gap, rounds=24) -> None:
             for i in range(1, len(layer_nodes)):
                 a, b = nodes[layer_nodes[i - 1]], nodes[layer_nodes[i]]
                 g = gap if (a.kind != "dummy" and b.kind != "dummy") else gap * 0.6
-                sep = (a.w + b.w) / 2 + g
+                sep = (a.w + b.w) / 2 + g + extra.get((a.id, b.id), 0.0)
                 if xs[i] < xs[i - 1] + sep:
                     xs[i] = xs[i - 1] + sep
             shift = sum(xs[i] - desired[layer_nodes[i]] for i in range(len(layer_nodes))) / len(layer_nodes)
@@ -397,22 +587,31 @@ def _balance(layers, nodes, preds, succs, gap, rounds=24) -> None:
                 nodes[nid].x = xs[i] - shift
 
 
-def _free_coordinates(d, layers, preds, succs, opts) -> None:
+def _free_coordinates(d, layers, preds, succs, opts, extra=None) -> None:
     """Place each connected component independently, then pack the components
     side by side.  Balancing components together lets unconnected parts drift
     apart a little every round, which compounds into large empty gaps."""
     nodes = d.nodes
     gap = opts.nodesep
     offset = 0.0
-    for comp in _components(d, preds, succs):
+    cpreds, csuccs = preds, succs
+    if extra is not None:
+        # a control structure: the ends of a lateral edge belong to one component
+        cpreds = defaultdict(list, {k: list(v) for k, v in preds.items()})
+        csuccs = defaultdict(list, {k: list(v) for k, v in succs.items()})
+        for e in d.edges:
+            if _is_lateral(d, e):
+                csuccs[e.src].append(e.dst)
+                cpreds[e.dst].append(e.src)
+    for comp in _components(d, cpreds, csuccs):
         member = set(comp)
         sub = [[nid for nid in layer_nodes if nid in member] for layer_nodes in layers]
         for layer_nodes in sub:
-            width = _pack(layer_nodes, nodes, gap)
+            width = _pack(layer_nodes, nodes, gap, extra=extra)
             for nid in layer_nodes:
                 nodes[nid].x -= width / 2
-        _balance(sub, nodes, preds, succs, gap)
-        _snap(sub, nodes, preds, succs, gap)
+        _balance(sub, nodes, preds, succs, gap, extra=extra)
+        _snap(sub, nodes, preds, succs, gap, extra=extra)
         minx = min(nodes[nid].left for nid in comp)
         maxx = max(nodes[nid].right for nid in comp)
         for nid in comp:
@@ -420,9 +619,10 @@ def _free_coordinates(d, layers, preds, succs, opts) -> None:
         offset += (maxx - minx) + gap * 2
 
 
-def _snap(layers, nodes, preds, succs, gap, bounds=None, max_jog=90.0) -> None:
+def _snap(layers, nodes, preds, succs, gap, bounds=None, max_jog=90.0, extra=None) -> None:
     """Straighten single-neighbour chains: move a node onto its only
     predecessor's x (or only successor's) when that does not collide."""
+    extra = extra or {}
     for _ in range(4):
         for layer_nodes in layers:
             for i, nid in enumerate(layer_nodes):
@@ -440,10 +640,10 @@ def _snap(layers, nodes, preds, succs, gap, bounds=None, max_jog=90.0) -> None:
                 lo, hi = -1e9, 1e9
                 if i > 0:
                     m = nodes[layer_nodes[i - 1]]
-                    lo = m.x + (m.w + n.w) / 2 + gap
+                    lo = m.x + (m.w + n.w) / 2 + gap + extra.get((m.id, nid), 0.0)
                 if i < len(layer_nodes) - 1:
                     m = nodes[layer_nodes[i + 1]]
-                    hi = m.x - (m.w + n.w) / 2 - gap
+                    hi = m.x - (m.w + n.w) / 2 - gap - extra.get((nid, m.id), 0.0)
                 if bounds:
                     blo, bhi = bounds(n)
                     lo, hi = max(lo, blo + n.w / 2), min(hi, bhi - n.w / 2)
@@ -511,12 +711,23 @@ def _lane_coordinates(d, layers, preds, succs, opts) -> None:
 
 
 # ---------------------------------------------------------------- routing ---
+_CONTROL_JOG = 12.0       # a control-structure arrow jogs this far below its source box
+
+
 def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
     nodes = d.nodes
+    control = d.kind == "control_structure"
+    band_bottom = [max((nodes[n].bottom for n in layer_nodes), default=0.0) for layer_nodes in layers]
+    for e in d.edges:
+        e.points = []
     out_edges = defaultdict(list)
     in_edges = defaultdict(list)
+    lateral = defaultdict(list)
     for e in d.edges:
         if e.back or e.src == e.dst:
+            continue
+        if _is_lateral(d, e):
+            lateral[frozenset((e.src, e.dst))].append(e)
             continue
         out_edges[e.src].append(e)
         in_edges[e.dst].append(e)
@@ -530,9 +741,21 @@ def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
             es = sorted(edges, key=lambda e: (nodes[e.path[1]].x, _edge_rank(e)))
         else:
             es = sorted(edges, key=lambda e: (nodes[e.path[-2]].x, _edge_rank(e)))
-        span = node.w * (0.7 if node.kind in ("fork", "join") else 0.5)
+        # a control-structure box spreads its arrows over more of its width so
+        # the signal stacks beside them have room
+        span = node.w * (0.7 if node.kind in ("fork", "join") or node.kind in CONTROL_NODE_KINDS else 0.5)
         n = len(es)
         return {id(e): -span / 2 + span * i / (n - 1) for i, e in enumerate(es)}
+
+    # a lateral edge runs straight between two boxes of one layer; a pair of
+    # them (a request and its answer) runs as two parallel lines, the control
+    # action above the feedback
+    for es in lateral.values():
+        es.sort(key=_edge_rank)
+        for k, e in enumerate(es):
+            s, t = nodes[e.src], nodes[e.dst]
+            y = s.y + (k - (len(es) - 1) / 2) * 16.0
+            e.points = [(s.right, y), (t.left, y)] if s.x < t.x else [(s.left, y), (t.right, y)]
 
     out_off, in_off = {}, {}
     for nid, es in out_edges.items():
@@ -543,7 +766,7 @@ def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
     # channel offsets between layers so parallel horizontals do not overlap
     gap_edges = defaultdict(list)
     for e in d.edges:
-        if e.back or e.src == e.dst:
+        if e.back or e.src == e.dst or e.points:
             continue
         for a, b in zip(e.path, e.path[1:], strict=False):
             if abs(nodes[a].x - nodes[b].x) > 1.0:
@@ -554,7 +777,7 @@ def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
         n = len(items)
         step = min(8.0, (opts.ranksep * 0.6) / max(1, n))
         for i, (e, a, b) in enumerate(items):
-            chan[(id(e), a, b)] = (i - (n - 1) / 2) * step
+            chan[(id(e), a, b)] = (i * step) if control else (i - (n - 1) / 2) * step
 
     for e in d.edges:
         if e.src == e.dst:
@@ -562,7 +785,7 @@ def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
             r = n.right
             e.points = [(r, n.y - 8), (r + 28, n.y - 8), (r + 28, n.y + 8), (r, n.y + 8)]
             continue
-        if e.back:
+        if e.back or e.points:
             continue
         pts = []
         src = nodes[e.path[0]]
@@ -591,7 +814,11 @@ def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
                 pts.append((bx, b.top))
                 continue
             if abs(ax_ - bx) > 1.0:
-                ymid = (a.bottom + b.top) / 2 + chan.get((id(e), path[i], path[i + 1]), 0.0)
+                # a control-structure arrow jogs just under its source so one
+                # long vertical run reaches the target with its signal stack
+                # hanging beside it in the channel between the two boxes
+                ymid = (band_bottom[a.layer] + _CONTROL_JOG) if control else (a.bottom + b.top) / 2
+                ymid += chan.get((id(e), path[i], path[i + 1]), 0.0)
                 pts.append((ax_, ymid))
                 pts.append((bx, ymid))
             else:
@@ -639,6 +866,8 @@ def _simplify(pts):
 # ----------------------------------------------------------------- labels ---
 _LABEL_PAD = 4.0
 _LABEL_T = (0.5, 0.35, 0.65, 0.2, 0.8)
+# a control structure slides a stack along its arrow in finer steps
+_LABEL_T_FINE = (0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9)
 
 
 def _overlaps(a, b) -> bool:
@@ -675,7 +904,13 @@ def _place_labels(d: Diagram, swap: bool) -> list:
                 total += (min(r[2], o[2]) - max(r[0], o[0])) * (min(r[3], o[3]) - max(r[1], o[1]))
         return total
 
-    for e in d.edges:
+    control = d.kind == "control_structure"
+    steps = _LABEL_T_FINE if control else _LABEL_T
+    edges = list(d.edges)
+    if control:
+        # the tallest stacks take their place first
+        edges.sort(key=lambda e: -len(edge_label(e).split("\n")))
+    for e in edges:
         text = edge_label(e)
         if not text or not e.points:
             continue
@@ -717,9 +952,13 @@ def _place_labels(d: Diagram, swap: bool) -> list:
                 # the left and feedback on the right, so the two labels of a
                 # pair of arrows sit on opposite sides and never meet
                 offsets = ((side * (w / 2 + 4), 0), (-side * (w / 2 + 4), 0))
+            elif side is not None:
+                # on a horizontal run the control action's label sits above
+                # the line and the feedback's below it
+                offsets = ((0, side * (h / 2 + 2)), (0, -side * (h / 2 + 2)))
             else:
                 offsets = ((0, 0), (w / 2 + 4, 0) if vertical else (0, -(h / 2 + 2)))
-            for t in _LABEL_T:
+            for t in steps:
                 cx, cy = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
                 for dx, dy in offsets:
                     area = overlap_area(rect(cx + dx, cy + dy, w, h))

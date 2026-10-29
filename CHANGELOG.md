@@ -6,6 +6,52 @@ All notable changes to asi_escher are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-29
+
+The owner, looking at the rendering of his own control structure (two operators stacked one above the
+other, a drawing almost three times as tall as wide, two signal stacks overlapping): "have escher put
+peers at the same level and widen the canvas."
+
+### Changed
+
+- Control-structure layout in tiers by the control hierarchy: a box sits one tier below the deepest box
+  that sends it a control action, boxes that nobody commands are peers and share the top tier side by
+  side, a box commanded from two tiers sits below both. Feedback never moves a box of the hierarchy; a
+  box that only reports (a sensor, the environment) sits below the boxes it reports to, one that only
+  listens (an external system taking reports) just above the nearest box it hears from (it sat at the
+  top), the environment at the bottom beside the controlled process. A control action between two
+  peers (a field operator's stop request to the control-room operator, while the field operator also
+  commands the vehicle controller and the machine directly) is lateral: the two stay on one tier, the
+  arrow runs horizontally between them, its answer beneath it, the label above / below the line. The
+  owner's eight boxes come out in four tiers instead of five.
+- Wider canvas: `LayoutOptions.for_kind("control_structure")` gives `ranksep=110, nodesep=160` (was 96,
+  120); a control-structure box spreads its arrows over 70 % of its width (was 50 %) and is drawn at
+  least 12 px wider per algorithm line; every arrow jogs just under its tier and runs straight into its
+  target with the signal stack hanging beside that run in the channel between the two tiers (it jogged
+  mid-channel, splitting the run in two short halves the stacks did not fit beside); the tallest stacks
+  are placed first and slide along their arrow in finer steps; a channel grows by the height of a stack
+  that still overlapped and the layout is redone, up to three times. The bundled demo lays out
+  1133 x 1369 (was 837 x 1313, now wider than 0.8 of its height); the owner's structure 1724 x 2220
+  (was 1249 x 2570) with no layout issue (it had two `label_overlap`), both competent under OCR.
+- A note attached to a box gets 8 px more under its text: the OCR engine dropped the last italic line
+  when it sat tight on the border.
+- `LayoutIssue.edge` of a feedback edge names the author's `(src, dst)` (it named the reversed pair the
+  engine works with).
+- Every other diagram kind lays out as before, byte for byte.
+
+### Fixed
+
+- OCR gate and UTF-8 (found by asi_dewey): a non-ASCII label (a `•` bullet, an en dash, an `é`) came
+  back through PowerShell in the console code page as a control byte that broke the JSON report, so the
+  gate said `ocr unavailable`. The script now sets `[Console]::OutputEncoding` and `$OutputEncoding` to
+  UTF-8 and the subprocess output is decoded as UTF-8; the match strips accents and folds `rn`/`tn` to
+  an italic `m` on both sides.
+- Tests: the tier rule (peers share a tier, a box reached from two tiers sits below both, feedback
+  moves no box, a lateral arrow is horizontal with room for its label), the demo's width (at least 0.8
+  of its height) and zero label overlaps, the UTF-8 path with a faked payload and with the real engine
+  on a diagram carrying `•`, `–` and `é`; the private smoke test asserts the four tiers, zero label
+  overlaps and the OCR verdict, counts only.
+
 ## [0.2.0] - 2026-10-29
 
 Phase 1 of the control-structure plan (asi_dewey `docs/control-structure-plan.md`). The owner's ask: "we
@@ -190,7 +236,8 @@ unversioned `pydraw` prototype.
 - Demo catalog moved into the package as `examples`; `demos/build_all.py`
   is a thin wrapper around `gallery`.
 
-[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/c00289/asi_escher/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/c00289/asi_escher/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/c00289/asi_escher/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/c00289/asi_escher/compare/v0.1.1...v0.1.2

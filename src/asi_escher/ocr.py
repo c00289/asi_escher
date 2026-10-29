@@ -10,11 +10,15 @@ and, for a control structure, every algorithm code.  Each miss becomes a
 unavailable (no Windows, no language pack, PowerShell missing) the report
 says ``ocr unavailable`` as one issue and never fails anything.
 
-The match is tolerant: case-insensitive, punctuation and whitespace ignored,
-a label found when its words appear in order on one OCR line or across
-adjacent lines (so hyphenation and the dash of ``CA-01`` do not matter), and
-the engine's usual confusions (``O`` for ``0``, ``I``/``l`` for ``1``) are
-folded on both sides.
+The match is tolerant: case-insensitive, punctuation, accents and whitespace
+ignored, a label found when its words appear in order on one OCR line or
+across adjacent lines (so hyphenation and the dash of ``CA-01`` do not
+matter), and the engine's usual confusions (``O`` for ``0``, ``I``/``l`` for
+``1``, ``rn``/``tn`` for an italic ``m``) are folded on both sides.
+
+The PowerShell side writes UTF-8 and the Python side reads UTF-8, so a label
+with a bullet, a dash or an accent (``•``, ``–``, ``é``) comes back intact
+instead of as a control byte of the console code page that breaks the JSON.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from dataclasses import dataclass, field
 
 from .model import Diagram, LayoutIssue
@@ -36,6 +41,8 @@ _PNG_ENV = "ASI_ESCHER_OCR_PNG"
 _SCRIPT = r'''
 $Path = $env:ASI_ESCHER_OCR_PNG
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 try {
     $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime]
     $null = [Windows.Globalization.Language, Windows.Globalization, ContentType=WindowsRuntime]
@@ -129,7 +136,7 @@ def recognize(png_path: str, timeout: float = OCR_TIMEOUT) -> OcrReport:
         proc = subprocess.run(
             [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
             env={**os.environ, _PNG_ENV: os.path.abspath(png_path)},
-            capture_output=True, text=True, timeout=timeout, check=False)
+            capture_output=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         report.error = f"OCR did not run: {exc}"
         return report
@@ -200,11 +207,17 @@ def expected_labels(d: Diagram) -> list[str]:
 
 # ------------------------------------------------------------- matching ----
 _CONFUSABLE = str.maketrans({"o": "0", "i": "1", "l": "1", "|": "1"})
+_CONFUSABLE_PAIRS = (("rn", "m"), ("tn", "m"))      # what an italic m comes back as
 
 
 def _tokens(text: str) -> list[str]:
-    """Lower-case alphanumeric words with the engine's confusions folded."""
-    return [t for t in re.split(r"[^a-z0-9]+", text.lower().translate(_CONFUSABLE)) if t]
+    """Lower-case alphanumeric words, accents stripped, with the engine's
+    confusions folded."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    folded = plain.lower()
+    for seen, meant in _CONFUSABLE_PAIRS:
+        folded = folded.replace(seen, meant)
+    return [t for t in re.split(r"[^a-z0-9]+", folded.translate(_CONFUSABLE)) if t]
 
 
 def _token_stream(lines: list[str]) -> list[str]:

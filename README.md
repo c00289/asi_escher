@@ -6,7 +6,7 @@ Pure-Python diagram generator for engineering documentation. Describe a
 diagram in a few lines of Python (or a JSON file), and asi_escher lays it out,
 writes it as an editable **draw.io** file and renders it to **PNG** and
 **SVG**, plus **Graphviz DOT** and **Mermaid** source, with no draw.io,
-Graphviz, Node or browser needed. Version **0.2.0**, alpha.
+Graphviz, Node or browser needed. Version **0.2.1**, alpha.
 
 Supported diagram families:
 
@@ -69,7 +69,7 @@ asi-escher = { path = "../asi_escher", editable = true }
 ```
 
 A pinned git source works the same way:
-`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.2.0" }`.
+`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.2.1" }`.
 
 This folder lives in OneDrive, which rejects the hardlinks uv normally makes
 from its cache; `pyproject.toml` therefore sets `tool.uv.link-mode = "copy"`
@@ -133,7 +133,7 @@ asi_escher's renderings of that same layout, not draw.io exports.
 
 Every output says so: the `.drawio` carries an XML comment after the
 `<mxfile>` opening and a small grey note under the drawing, and the PNG and
-SVG a grey footer line in the bottom-left corner ("asi_escher 0.2.0,
+SVG a grey footer line in the bottom-left corner ("asi_escher 0.2.1,
 2026-10-29; layout shared with `<slug>.drawio`"). `provenance=False` on
 `build()`, `render()` or `to_drawio()` (`--no-provenance` on the command
 line) switches the marks off; `name=` sets the stem they name.
@@ -165,13 +165,31 @@ d.note("n1", "Stops within 2 s of any fault", attached_to="vehicle")
 `kind` sets the box: plain for a `controller` and an `external_system`, a
 rounded box for a `human_controller`, a double border for the
 `controlled_process`, a dashed border for the `environment`, small shapes for
-a `sensor` and an `actuator`. A note attached to a box floats beside it. The
-layout is top-down by hierarchy (control actions rank, feedback does not),
-and between two boxes the control action keeps to the left and the feedback
-to the right, so the pair of arrows and their labels never overlap. DOT and
-Mermaid export the sections as label lines, the draw.io file as an HTML
+a `sensor` and an `actuator`. A note attached to a box floats beside it. DOT
+and Mermaid export the sections as label lines, the draw.io file as an HTML
 label with the same colours. `docs/control_structure_spec.json` is the
 bundled example as a JSON spec.
+
+The layout follows the control hierarchy, in tiers. A box sits one tier
+below the deepest box that sends it a control action; boxes that nobody
+commands are peers and share the top tier side by side; a box commanded
+from two tiers sits below both. Feedback never moves a box of the
+hierarchy: a box that only reports (a sensor, the environment) sits below
+the boxes it reports to, one that only listens (an external system taking
+reports) just above the nearest box it hears from, and the environment at
+the bottom beside the controlled process. A control action between two
+peers is a request, not a step down: when the sender's every other control
+action reaches past the receiver's own subordinates into the receiver's
+domain (a field operator asking the control-room operator for a stop while
+commanding the vehicle controller and the machine directly), the two stay
+on one tier and the arrow runs horizontally between them, its answer
+beneath it. Between two tiers the control action keeps to the left of a
+pair of arrows and the feedback to the right; each arrow jogs just under
+its tier and runs straight into its target with its signal stack hanging
+beside it in the channel, and a channel grows until the stacks in it fit,
+so the labels never overlap. `LayoutOptions.for_kind("control_structure")`
+gives the kind its wider gaps, and a box with many algorithms is drawn
+wider so the arrows on its edge keep apart.
 
 ![STPA control structure](docs/img/control_structure_demo.png)
 
@@ -187,11 +205,15 @@ ocr=True)` (`--ocr` on the command line) adds the report under `"ocr"` (an
 `LayoutIssue` of kind `ocr` per unreadable label; `ocr_check(png_path,
 expected)` runs it on any picture and `asi-escher verify <png> --expect
 LABEL...` from the shell (exit 0 competent, 1 unreadable labels, 3 engine
-unavailable). The match is tolerant: case and punctuation ignored, words
-found in order on one OCR line or across adjacent ones, hyphenation and the
-engine's usual confusions (`O`/`0`, `I`/`l`/`1`) folded. When the engine is
-not there (no Windows, no language pack, as on CI) the report says
-`ocr unavailable` as one issue and never fails a build. The gallery runs the
+unavailable). The match is tolerant: case, punctuation and accents ignored,
+words found in order on one OCR line or across adjacent ones, hyphenation
+and the engine's usual confusions (`O`/`0`, `I`/`l`/`1`, `rn`/`tn` for an
+italic `m`) folded. The PowerShell side writes UTF-8 and the Python side
+reads UTF-8, so a label with a bullet, a dash or an accent (`•`, `–`, `é`)
+comes back intact instead of as a control byte of the console code page,
+which used to break the JSON report and make the gate say `unavailable`.
+When the engine is not there (no Windows, no language pack, as on CI) the
+report says `ocr unavailable` as one issue and never fails a build. The gallery runs the
 gate on every control structure; the test suite asserts the bundled
 `control_structure_demo` is competent whenever the engine is available.
 
@@ -307,7 +329,8 @@ The layout is a deterministic layered (Sugiyama-style) algorithm:
 1. cycle removal by DFS back edges (back edges are routed in a channel on
    the right, or at the bottom for left-to-right diagrams);
 2. longest-path layering, with side inputs such as notes pulled next to
-   their consumer;
+   their consumer (a control structure layers by its control hierarchy, in
+   the tiers described above);
 3. dummy nodes for edges that span several layers;
 4. barycenter ordering, lane-aware when swimlanes are present;
 5. per-component coordinate balancing and chain straightening, with
@@ -385,7 +408,8 @@ exports), `test_ocr.py` (the matcher, the unavailable path, the CLI and the
 demo's legibility under the real engine), `test_render_pipeline.py`
 (renderer isolation, `build()`, formats and the CLI) and
 `test_private_smoke.py` (skipped unless a private sibling dataset is beside
-the repo; asserts counts only); `conftest.py` provides every bundled example
+the repo; asserts counts, the tier shape and the OCR verdict only);
+`conftest.py` provides every bundled example
 as a fixture. The geometry tests assert, for every bundled example, that
 nodes never overlap, edges are orthogonal, edges never pass through
 unrelated nodes, all geometry and labels fit the canvas, layout is repeatable
