@@ -69,7 +69,7 @@ def test_cli_list(capsys):
     assert capsys.readouterr().out.split() == [n for n, _ in EXAMPLES]
 
 
-def test_cli_example(tmp_path, capsys):
+def test_cli_example(tmp_path):
     assert main(["example", "state_estop_channel", "-o", str(tmp_path), "--formats", "svg,mmd"]) == 0
     assert set(os.listdir(tmp_path)) == {"state_estop_channel.svg", "state_estop_channel.mmd"}
     assert main(["example", "nope", "-o", str(tmp_path)]) == 2
