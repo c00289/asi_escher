@@ -5,7 +5,7 @@ One of the [ASI FuSa tools](https://github.com/c00289/c00289/blob/main/README.md
 Pure-Python diagram generator for engineering documentation. Describe a
 diagram in a few lines of Python (or a JSON file), and asi_escher lays it out
 and renders it to **PNG**, **SVG**, **Graphviz DOT** and **Mermaid**, with no
-Graphviz, Node or browser needed. Version **0.1.2**, alpha.
+Graphviz, Node or browser needed. Version **0.1.3**, alpha.
 
 Supported diagram families:
 
@@ -37,9 +37,11 @@ This repository sits next to its siblings and the `Roy's Brain` folder:
 
 ```
 OneDrive - Capgemini/
-├── asi_dewey/             <- working-knowledge store
+├── asi_dewey/             <- primary tool: working-knowledge store
+├── asi_kletz/             <- primary tool: safety plan
 ├── asi_escher/            <- this repo
-├── asi_gutenberg/         <- document generator
+├── asi_gutenberg/         <- document generator (depends on this repo)
+├── asi_hopper/            <- gateway: read-only Jira door
 └── Roy's Brain/           <- notes, corpus, datasets
 ```
 
@@ -65,7 +67,7 @@ asi-escher = { path = "../asi_escher", editable = true }
 ```
 
 A pinned git source works the same way:
-`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.1.2" }`.
+`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.1.3" }`.
 
 This folder lives in OneDrive, which rejects the hardlinks uv normally makes
 from its cache; `pyproject.toml` therefore sets `tool.uv.link-mode = "copy"`

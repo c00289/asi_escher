@@ -1,6 +1,6 @@
 [project]
 name = "asi_escher"
-version = "0.1.2"
+version = "0.1.3"
 description = "Pure-Python diagram generator: activity, flowchart, state and SysML block diagrams to PNG, SVG, DOT and Mermaid"
 readme = "README.md"
 authors = [

@@ -6,6 +6,13 @@ All notable changes to asi_escher are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-29
+
+### Fixed
+- README: the folder tree of the siblings named asi_dewey and asi_gutenberg only; asi_kletz (the other
+  primary tool) and asi_hopper (the Jira gateway) sit beside this repo too and are listed now, as the
+  sibling READMEs list them. Found by the family's integration review of 2026-10-29; no code changed.
+
 ## [0.1.2] - 2026-10-29
 
 ### Changed
@@ -122,6 +129,7 @@ unversioned `pydraw` prototype.
 - Demo catalog moved into the package as `examples`; `demos/build_all.py`
   is a thin wrapper around `gallery`.
 
-[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/c00289/asi_escher/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/c00289/asi_escher/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/c00289/asi_escher/releases/tag/v0.1.1
