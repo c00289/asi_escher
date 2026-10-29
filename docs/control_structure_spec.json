@@ -1,0 +1,268 @@
+{
+  "title": "Demo Loader Control Structure",
+  "kind": "control_structure",
+  "direction": "TB",
+  "nodes": [
+    {
+      "id": "operator",
+      "label": "Remote Operator",
+      "kind": "human_controller",
+      "responsibility": "Starts and stops the mission; takes over when the machine asks.",
+      "algorithms": [
+        [
+          "O1",
+          "Mission start / stop decision"
+        ],
+        [
+          "O2",
+          "Takeover on request"
+        ]
+      ],
+      "process_model": [
+        "Operator process model",
+        [
+          "Mission state (updated by FB-01)",
+          "Machine health (updated by FB-02)"
+        ]
+      ]
+    },
+    {
+      "id": "supervisor",
+      "label": "Site Supervisor",
+      "kind": "controller",
+      "responsibility": "Plans missions, assigns zones and keeps the site map current.",
+      "algorithms": [
+        [
+          "S1",
+          "Mission planning"
+        ],
+        [
+          "S2",
+          "Zone assignment"
+        ],
+        [
+          "S3",
+          "Map update"
+        ]
+      ],
+      "process_model": [
+        "Supervisor process model",
+        [
+          "Vehicle position (updated by FB-03)",
+          "Zone occupancy (updated by FB-03)"
+        ]
+      ]
+    },
+    {
+      "id": "vehicle",
+      "label": "Vehicle Controller",
+      "kind": "controller",
+      "responsibility": "Turns a mission into trajectories and drive commands; stops within the zone on any fault.",
+      "algorithms": [
+        [
+          "V1",
+          "Trajectory planning"
+        ],
+        [
+          "V2",
+          "Speed control"
+        ],
+        [
+          "V3",
+          "Obstacle response"
+        ],
+        [
+          "V4",
+          "Fault reaction"
+        ]
+      ],
+      "process_model": [
+        "Vehicle process model",
+        [
+          "Machine speed and heading (updated by FB-10)",
+          "Obstacle list (updated by FB-11)",
+          "Drive inhibit state (updated by FB-12)"
+        ]
+      ]
+    },
+    {
+      "id": "safety",
+      "label": "Safety Supervisor",
+      "kind": "controller",
+      "responsibility": "Monitors the stop paths and inhibits the drive on a stop request.",
+      "algorithms": [
+        [
+          "K1",
+          "Stop path monitoring"
+        ],
+        [
+          "K2",
+          "Drive inhibit"
+        ]
+      ],
+      "process_model": [
+        "Safety process model",
+        [
+          "Stop request state (updated by FB-20)"
+        ]
+      ]
+    },
+    {
+      "id": "machine",
+      "label": "Loader Machine",
+      "kind": "controlled_process",
+      "responsibility": "Drives, steers and lifts as commanded.",
+      "algorithms": [
+        [
+          "M1",
+          "Drive actuation"
+        ],
+        [
+          "M2",
+          "Steering actuation"
+        ],
+        [
+          "M3",
+          "Boom actuation"
+        ]
+      ]
+    },
+    {
+      "id": "perception",
+      "label": "Perception Unit",
+      "kind": "sensor"
+    },
+    {
+      "id": "environment",
+      "label": "Work Site",
+      "kind": "environment",
+      "responsibility": "Stockpiles, haul roads, people and other machines."
+    },
+    {
+      "id": "fleet",
+      "label": "Fleet Service",
+      "kind": "external_system",
+      "responsibility": "Receives mission reports."
+    },
+    {
+      "id": "note_vehicle",
+      "label": "V4 stops the machine within 2 s of any fault",
+      "kind": "note",
+      "attached_to": "vehicle"
+    }
+  ],
+  "edges": [
+    {
+      "src": "operator",
+      "dst": "supervisor",
+      "kind": "control_action",
+      "signals": [
+        "CA-01 Mission Start",
+        "CA-02 Mission Stop"
+      ]
+    },
+    {
+      "src": "supervisor",
+      "dst": "operator",
+      "kind": "feedback",
+      "signals": [
+        "FB-01 Mission State",
+        "FB-02 Machine Health"
+      ]
+    },
+    {
+      "src": "supervisor",
+      "dst": "vehicle",
+      "kind": "control_action",
+      "signals": [
+        "CA-10 Mission Data",
+        "CA-11 Zone Limits",
+        "CA-12 Site Map"
+      ]
+    },
+    {
+      "src": "vehicle",
+      "dst": "supervisor",
+      "kind": "feedback",
+      "signals": [
+        "FB-03 Vehicle Position",
+        "FB-04 Mission Progress"
+      ]
+    },
+    {
+      "src": "vehicle",
+      "dst": "machine",
+      "kind": "control_action",
+      "signals": [
+        "CA-20 Drive Command",
+        "CA-21 Steer Command",
+        "CA-22 Boom Command"
+      ]
+    },
+    {
+      "src": "machine",
+      "dst": "vehicle",
+      "kind": "feedback",
+      "signals": [
+        "FB-10 Machine State",
+        "FB-12 Drive Inhibit State"
+      ]
+    },
+    {
+      "src": "operator",
+      "dst": "safety",
+      "kind": "control_action",
+      "signals": [
+        "CA-30 Emergency Stop"
+      ]
+    },
+    {
+      "src": "safety",
+      "dst": "operator",
+      "kind": "feedback",
+      "signals": [
+        "FB-20 Stop Request State"
+      ]
+    },
+    {
+      "src": "safety",
+      "dst": "machine",
+      "kind": "control_action",
+      "signals": [
+        "CA-31 Drive Inhibit"
+      ]
+    },
+    {
+      "src": "perception",
+      "dst": "vehicle",
+      "kind": "feedback",
+      "signals": [
+        "FB-11 Obstacle List"
+      ]
+    },
+    {
+      "src": "environment",
+      "dst": "perception",
+      "kind": "feedback",
+      "signals": [
+        "FB-30 Scene"
+      ]
+    },
+    {
+      "src": "machine",
+      "dst": "environment",
+      "kind": "control_action",
+      "signals": [
+        "CA-40 Material Moved"
+      ]
+    },
+    {
+      "src": "vehicle",
+      "dst": "fleet",
+      "kind": "feedback",
+      "signals": [
+        "FB-05 Mission Report"
+      ]
+    }
+  ]
+}

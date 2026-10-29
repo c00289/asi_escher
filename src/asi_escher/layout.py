@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict, deque
 
 from .metrics import SMALL_PX, edge_label, size_node, text_box, text_width
-from .model import Diagram, LayoutIssue, Node
+from .model import Diagram, Edge, LayoutIssue, Node
 
 
 class LayoutWarning(UserWarning):
@@ -44,6 +44,18 @@ class LayoutOptions:
         self.iterations = iterations
         self.back_channel = back_channel
 
+    @classmethod
+    def for_kind(cls, kind: str) -> LayoutOptions:
+        """The defaults ``layout()`` uses for a diagram kind when given no options.
+
+        A control structure gets wider gaps: its boxes are large, its signal
+        labels hang beside the arrows and a feedback arrow runs parallel to
+        the control action it answers.
+        """
+        if kind == "control_structure":
+            return cls(ranksep=96.0, nodesep=120.0)
+        return cls()
+
 
 def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
     """Compute node positions, edge polylines and canvas size in place.
@@ -54,7 +66,7 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
     application can log it, flag the diagram for review, or silence it with
     ``warnings.filterwarnings("ignore", category=LayoutWarning)``.
     """
-    opts = opts or LayoutOptions()
+    opts = opts or LayoutOptions.for_kind(d.kind)
     d.validate()
     d.issues = []
     # drop stale dummies if re-laying out
@@ -75,15 +87,29 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
         if d.direction == "LR":
             _transpose(d)
         return d
+    control = d.kind == "control_structure"
+    order, attached = _detach_notes(d)
+    if control:
+        # feedback points up the hierarchy: lay it out reversed, beside the
+        # control action it answers, and turn it round at the end
+        for e in d.edges:
+            e.back = e.kind == "feedback" and e.src != e.dst
     _find_back_edges(d)
+    reversed_edges = _reverse_back_edges(d) if control else []
     _assign_layers(d)
     _insert_dummies(d)
     layers, preds, succs = _order(d, opts)
     _assign_coordinates(d, layers, preds, succs, opts)
     _route_edges(d, layers, opts)
+    _attach_notes(d, order, attached, opts)
     boxes = _place_labels(d, swap=d.direction == "LR")
     _check_edge_crossings(d)
     _normalize(d, opts, boxes)
+    for e in reversed_edges:
+        e.src, e.dst = e.dst, e.src
+        e.path.reverse()
+        e.points.reverse()
+        e.back = True
     if d.direction == "LR":
         _transpose(d)
     if d.issues:
@@ -95,12 +121,15 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
 
 # ---------------------------------------------------------------- cycles ---
 def _find_back_edges(d: Diagram) -> None:
+    """Mark the DFS back edges; edges already marked ``back`` are left out of
+    the search (a control structure's feedback is decided before it runs)."""
     adj = defaultdict(list)
     for i, e in enumerate(d.edges):
-        adj[e.src].append((e.dst, i))
+        if not e.back:
+            adj[e.src].append((e.dst, i))
     indeg = {nid: 0 for nid in d.nodes}
     for e in d.edges:
-        if e.src != e.dst:
+        if e.src != e.dst and not e.back:
             indeg[e.dst] += 1
     color = {nid: 0 for nid in d.nodes}
     roots = [n for n in d.nodes if indeg[n] == 0] + list(d.nodes)
@@ -124,6 +153,24 @@ def _find_back_edges(d: Diagram) -> None:
             else:
                 color[u] = 2
                 stack.pop()
+
+
+def _reverse_back_edges(d: Diagram) -> list[Edge]:
+    """Turn every back edge round so the layering, ordering and routing treat
+    it as a forward edge running beside its partner; ``layout()`` turns the
+    result back.  Self loops stay as they are."""
+    out = []
+    for e in d.edges:
+        if e.back and e.src != e.dst:
+            e.src, e.dst = e.dst, e.src
+            e.back = False
+            out.append(e)
+    return out
+
+
+def _edge_rank(e: Edge) -> int:
+    """0 for a control action (kept left of a pair of boxes), 1 for feedback (right)."""
+    return 1 if e.kind == "feedback" else 0
 
 
 # -------------------------------------------------------------- layering ---
@@ -206,6 +253,12 @@ def _order(d: Diagram, opts: LayoutOptions):
         visit(nid)
 
     pos = {}
+    # a feedback edge's dummies sort after a control action's when their
+    # barycenters tie, so the pair of arrows between two boxes never crosses
+    rank = defaultdict(int)
+    for e in d.edges:
+        for nid in e.path[1:-1]:
+            rank[nid] = _edge_rank(e)
 
     def refresh():
         for layer_nodes in layers:
@@ -226,7 +279,7 @@ def _order(d: Diagram, opts: LayoutOptions):
             for nid in layer_nodes:
                 ns = nb[nid]
                 keys[nid] = (sum(pos[v] for v in ns) / len(ns)) if ns else pos[nid]
-            layer_nodes.sort(key=lambda nid: (lane_key(nid), keys[nid], pos[nid]))
+            layer_nodes.sort(key=lambda nid: (lane_key(nid), keys[nid], rank[nid], pos[nid]))
             for i, nid in enumerate(layer_nodes):
                 pos[nid] = i
 
@@ -474,9 +527,9 @@ def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
         if len(edges) <= 1:
             return {id(e): 0.0 for e in edges}
         if outgoing:
-            es = sorted(edges, key=lambda e: nodes[e.path[1]].x)
+            es = sorted(edges, key=lambda e: (nodes[e.path[1]].x, _edge_rank(e)))
         else:
-            es = sorted(edges, key=lambda e: nodes[e.path[-2]].x)
+            es = sorted(edges, key=lambda e: (nodes[e.path[-2]].x, _edge_rank(e)))
         span = node.w * (0.7 if node.kind in ("fork", "join") else 0.5)
         n = len(es)
         return {id(e): -span / 2 + span * i / (n - 1) for i, e in enumerate(es)}
@@ -656,11 +709,19 @@ def _place_labels(d: Diagram, swap: bool) -> list:
         # line, then hanging beside it; the first collision-free one wins and
         # otherwise the one with the least overlap
         best, best_area = None, None
+        side = {"control_action": -1.0, "feedback": 1.0}.get(e.kind)
         for a, b in segs:
             vertical = abs(a[0] - b[0]) < abs(a[1] - b[1])
+            if side is not None and vertical:
+                # a signal label hangs beside its arrow, control actions on
+                # the left and feedback on the right, so the two labels of a
+                # pair of arrows sit on opposite sides and never meet
+                offsets = ((side * (w / 2 + 4), 0), (-side * (w / 2 + 4), 0))
+            else:
+                offsets = ((0, 0), (w / 2 + 4, 0) if vertical else (0, -(h / 2 + 2)))
             for t in _LABEL_T:
                 cx, cy = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
-                for dx, dy in ((0, 0), (w / 2 + 4, 0) if vertical else (0, -(h / 2 + 2))):
+                for dx, dy in offsets:
                     area = overlap_area(rect(cx + dx, cy + dy, w, h))
                     if best_area is None or area < best_area:
                         best, best_area = (cx + dx, cy + dy), area
@@ -711,6 +772,69 @@ def _check_edge_crossings(d: Diagram) -> None:
             d.issues.append(LayoutIssue(
                 "edge_through_node", f"edge {e.src}->{e.dst} passes through node {hit!r}",
                 edge=(e.src, e.dst), node=hit))
+
+
+# ---------------------------------------------------------------- notes ----
+def _detach_notes(d: Diagram):
+    """Take the notes attached to a box out of the graph for the core steps;
+    ``_attach_notes`` puts them back beside their box."""
+    order = list(d.nodes)
+    attached = {nid: n for nid, n in d.nodes.items()
+                if n.kind == "note" and n.attached_to is not None and n.attached_to in d.nodes}
+    for nid in attached:
+        del d.nodes[nid]
+    return order, attached
+
+
+def _attach_notes(d: Diagram, order, attached, opts: LayoutOptions) -> None:
+    """Float each attached note beside its box: to the right of it, level with
+    its top, else to the left, else further right past whatever is in the way."""
+    if not attached:
+        return
+    others = [n for n in d.nodes.values() if n.kind != "dummy"]
+    gap = opts.nodesep * 0.3 + 8
+    for note in attached.values():
+        host = d.nodes[note.attached_to]
+        note.layer = host.layer
+        note.y = host.top + note.h / 2
+        right, left = host.right + gap + note.w / 2, host.left - gap - note.w / 2
+        step = note.w + gap
+        candidates = [right, left] + [right + step * k for k in range(1, 6)] + [left - step * k for k in range(1, 6)]
+        clear = [x for x in candidates if not _note_hits(note, x, others, d)]
+        if clear:
+            note.x = clear[0]
+        else:
+            # no clear spot beside the host: the first one free of other boxes
+            note.x = next((x for x in candidates if not _note_hits(note, x, others, None)), right)
+        others.append(note)
+    # restore the author's node order
+    rest = dict(d.nodes)
+    d.nodes.clear()
+    for nid in order:
+        d.nodes[nid] = attached[nid] if nid in attached else rest.pop(nid)
+    d.nodes.update(rest)      # the dummies
+
+
+def _note_hits(note: Node, x: float, others, d: Diagram | None) -> bool:
+    """True when the note at centre ``x`` touches another box or, when ``d``
+    is given, a routed edge segment."""
+    note.x = x
+    if any(_boxes_touch(note, o) for o in others):
+        return True
+    if d is None:
+        return False
+    pad = 6.0
+    for e in d.edges:
+        for (x0, y0), (x1, y1) in zip(e.points, e.points[1:], strict=False):
+            if (max(x0, x1) >= note.left - pad and min(x0, x1) <= note.right + pad
+                    and max(y0, y1) >= note.top - pad and min(y0, y1) <= note.bottom + pad):
+                return True
+    return False
+
+
+def _boxes_touch(a: Node, b: Node, pad: float = 4.0) -> bool:
+    return not (a.right + pad <= b.left or b.right + pad <= a.left
+                or a.bottom + pad <= b.top or b.bottom + pad <= a.top)
 
 
 # ------------------------------------------------------------- finishing ---

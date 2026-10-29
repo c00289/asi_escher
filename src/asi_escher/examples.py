@@ -439,6 +439,62 @@ def stress_random_dag(n: int = 44, seed: int = 7) -> Diagram:
     return d
 
 
+# ------------------------------------------------------ control structure --
+def control_structure_demo() -> Diagram:
+    """An STPA control structure of a demonstration loader: an operator and a
+    site supervisor above a vehicle controller, the machine below it, the
+    environment at the bottom and a stop path from the operator straight to
+    the machine.  Every name and signal is invented."""
+    d = Diagram("Demo Loader Control Structure", "control_structure")
+    d.controller("operator", "Remote Operator", kind="human_controller",
+                 responsibility="Starts and stops the mission; takes over when the machine asks.",
+                 algorithms=[("O1", "Mission start / stop decision"), ("O2", "Takeover on request")],
+                 process_model=("Operator process model",
+                                ["Mission state (updated by FB-01)", "Machine health (updated by FB-02)"]))
+    d.controller("supervisor", "Site Supervisor",
+                 responsibility="Plans missions, assigns zones and keeps the site map current.",
+                 algorithms=[("S1", "Mission planning"), ("S2", "Zone assignment"), ("S3", "Map update")],
+                 process_model=("Supervisor process model",
+                                ["Vehicle position (updated by FB-03)", "Zone occupancy (updated by FB-03)"]))
+    d.controller("vehicle", "Vehicle Controller",
+                 responsibility="Turns a mission into trajectories and drive commands; "
+                                "stops within the zone on any fault.",
+                 algorithms=[("V1", "Trajectory planning"), ("V2", "Speed control"),
+                             ("V3", "Obstacle response"), ("V4", "Fault reaction")],
+                 process_model=("Vehicle process model",
+                                ["Machine speed and heading (updated by FB-10)",
+                                 "Obstacle list (updated by FB-11)",
+                                 "Drive inhibit state (updated by FB-12)"]))
+    d.controller("safety", "Safety Supervisor",
+                 responsibility="Monitors the stop paths and inhibits the drive on a stop request.",
+                 algorithms=[("K1", "Stop path monitoring"), ("K2", "Drive inhibit")],
+                 process_model=("Safety process model", ["Stop request state (updated by FB-20)"]))
+    d.controller("machine", "Loader Machine", kind="controlled_process",
+                 responsibility="Drives, steers and lifts as commanded.",
+                 algorithms=[("M1", "Drive actuation"), ("M2", "Steering actuation"), ("M3", "Boom actuation")])
+    d.controller("perception", "Perception Unit", kind="sensor")
+    d.controller("environment", "Work Site", kind="environment",
+                 responsibility="Stockpiles, haul roads, people and other machines.")
+    d.controller("fleet", "Fleet Service", kind="external_system",
+                 responsibility="Receives mission reports.")
+    d.note("note_vehicle", "V4 stops the machine within 2 s of any fault", attached_to="vehicle")
+
+    d.control_action("operator", "supervisor", ["CA-01 Mission Start", "CA-02 Mission Stop"])
+    d.feedback("supervisor", "operator", ["FB-01 Mission State", "FB-02 Machine Health"])
+    d.control_action("supervisor", "vehicle", ["CA-10 Mission Data", "CA-11 Zone Limits", "CA-12 Site Map"])
+    d.feedback("vehicle", "supervisor", ["FB-03 Vehicle Position", "FB-04 Mission Progress"])
+    d.control_action("vehicle", "machine", ["CA-20 Drive Command", "CA-21 Steer Command", "CA-22 Boom Command"])
+    d.feedback("machine", "vehicle", ["FB-10 Machine State", "FB-12 Drive Inhibit State"])
+    d.control_action("operator", "safety", ["CA-30 Emergency Stop"])
+    d.feedback("safety", "operator", ["FB-20 Stop Request State"])
+    d.control_action("safety", "machine", ["CA-31 Drive Inhibit"])
+    d.feedback("perception", "vehicle", ["FB-11 Obstacle List"])
+    d.feedback("environment", "perception", ["FB-30 Scene"])
+    d.control_action("machine", "environment", ["CA-40 Material Moved"])
+    d.feedback("vehicle", "fleet", ["FB-05 Mission Report"])
+    return d
+
+
 EXAMPLES: list[tuple[str, Callable[[], Diagram]]] = [
     ("activity_load_cycle", activity_load_cycle),
     ("activity_swimlanes_estop", activity_swimlanes_estop),
@@ -456,4 +512,5 @@ EXAMPLES: list[tuple[str, Callable[[], Diagram]]] = [
     ("ibd_safety_controller", ibd_safety_controller),
     ("req_safety_requirements", req_safety_requirements),
     ("stress_random_dag", stress_random_dag),
+    ("control_structure_demo", control_structure_demo),
 ]

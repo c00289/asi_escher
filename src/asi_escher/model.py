@@ -10,23 +10,39 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# Diagram kinds.  The kind only affects the Mermaid exporter's choice of
-# diagram type and is otherwise informational.
-DIAGRAM_KINDS = {"activity", "flowchart", "state", "bdd", "ibd", "req"}
+# Diagram kinds.  The kind selects the Mermaid exporter's diagram type and,
+# for ``control_structure``, the layout rules of an STPA control structure
+# (top-down by hierarchy, control actions left and feedback right); it is
+# otherwise informational.
+DIAGRAM_KINDS = {"activity", "flowchart", "state", "bdd", "ibd", "req", "control_structure"}
+
+# Node kinds of an STPA control structure: boxes with a responsibility, an
+# algorithms section and a process-model section.  The kind drives the box
+# style (a double border for the controlled process, a dashed one for the
+# environment, a rounded one for a human controller, plain for a controller
+# and an external system, small shapes for a sensor and an actuator).
+CONTROL_NODE_KINDS = {
+    "controller", "human_controller", "controlled_process", "environment",
+    "sensor", "actuator", "external_system",
+}
 
 # Node kinds understood by the layout engine, renderer and exporters.
 NODE_KINDS = {
     "start", "end", "flowfinal", "action", "decision", "merge", "fork", "join",
     "note", "state", "block", "part", "requirement", "object", "io",
     "process", "document", "database", "dummy",
-}
+} | CONTROL_NODE_KINDS
+
+# Edge kinds of a control structure: a control action points down the
+# hierarchy (red), feedback points up (blue); both carry numbered signals.
+CONTROL_EDGE_KINDS = {"control_action", "feedback"}
 
 # Edge kinds. "flow" is the default control/object flow arrow.
 EDGE_KINDS = {
     "flow", "dependency", "composition", "aggregation", "generalization",
     "association", "connector", "satisfy", "derive", "verify", "refine",
     "allocate", "itemflow",
-}
+} | CONTROL_EDGE_KINDS
 
 EDGE_STYLES = {"solid", "dashed", "dotted"}
 
@@ -44,6 +60,13 @@ class Node:
     compartments: list = field(default_factory=list)
     fill: str | None = None
     stroke: str | None = None
+    # control-structure sections: a responsibility text, the algorithms as
+    # (code, name) pairs and the process model as (title, [entries]); a note
+    # may name the controller it floats beside (``attached_to``)
+    responsibility: str = ""
+    algorithms: list = field(default_factory=list)
+    process_model: tuple | None = None
+    attached_to: str | None = None
     # layout results (centre x/y, width/height, layer index, order in layer,
     # and the label as wrapped lines).  The author's ``label`` is never changed.
     x: float = 0.0
@@ -85,6 +108,9 @@ class Edge:
     style: str = "solid"          # solid | dashed | dotted
     src_port: str | None = None
     dst_port: str | None = None
+    # the numbered signals a control action or feedback carries, one per
+    # label line ("CA-01 Mission Data"); ``label`` is their join
+    signals: list = field(default_factory=list)
     # layout results
     back: bool = False
     path: list = field(default_factory=list)     # node ids incl. dummies
@@ -203,8 +229,45 @@ class Diagram:
     def merge(self, id, lane=None): return self.node(id, "", "merge", lane=lane)
     def fork(self, id, lane=None): return self.node(id, "", "fork", lane=lane)
     def join(self, id, lane=None): return self.node(id, "", "join", lane=lane)
-    def note(self, id, label, lane=None): return self.node(id, label, "note", lane=lane)
     def state(self, id, label=None, **kw): return self.node(id, label, "state", **kw)
+
+    def note(self, id, label, lane=None, attached_to=None):
+        """A note; ``attached_to`` names the control-structure box it floats beside."""
+        if attached_to is not None and attached_to not in self.nodes:
+            raise KeyError(f"note {id!r} is attached to unknown node {attached_to!r}")
+        return self.node(id, label, "note", lane=lane, attached_to=attached_to)
+
+    # control structures (STPA)
+    def controller(self, id, label=None, kind="controller", responsibility="",
+                   algorithms=None, process_model=None, **kw):
+        """A control-structure box: a controller, human controller, controlled
+        process, environment, sensor, actuator or external system.
+
+        ``responsibility`` is free text (newlines kept), ``algorithms`` a list
+        of ``(code, name)`` pairs drawn in the orange section and
+        ``process_model`` a ``(title, [entries])`` pair drawn in the blue one.
+        """
+        if kind not in CONTROL_NODE_KINDS:
+            raise ValueError(f"unknown controller kind {kind!r}; expected one of {sorted(CONTROL_NODE_KINDS)}")
+        algs = [(str(c), str(n)) for c, n in (algorithms or [])]
+        pm = None
+        if process_model is not None:
+            title, entries = process_model
+            pm = (str(title), [str(x) for x in entries])
+        return self.node(id, label, kind, responsibility=responsibility or "", algorithms=algs,
+                         process_model=pm, **kw)
+
+    def control_action(self, src, dst, signals=(), **kw):
+        """A red arrow down the hierarchy carrying ``signals`` (one label line each)."""
+        return self._signal_edge(src, dst, "control_action", signals, **kw)
+
+    def feedback(self, src, dst, signals=(), **kw):
+        """A blue arrow up the hierarchy carrying ``signals`` (one label line each)."""
+        return self._signal_edge(src, dst, "feedback", signals, **kw)
+
+    def _signal_edge(self, src, dst, kind, signals, **kw):
+        sig = [signals] if isinstance(signals, str) else [str(x) for x in signals]
+        return self.edge(src, dst, "\n".join(sig), kind, signals=sig, **kw)
 
     def block(self, id, label=None, stereotype="block", values=None, parts=None,
               operations=None, **kw):
@@ -242,6 +305,9 @@ class Diagram:
             for nid in (e.src, e.dst):
                 if nid not in self.nodes:
                     raise ValueError(f"edge {e.src!r}->{e.dst!r} references unknown node {nid!r}")
+        for n in self.real_nodes():
+            if n.attached_to is not None and n.attached_to not in self.nodes:
+                raise ValueError(f"note {n.id!r} is attached to unknown node {n.attached_to!r}")
         if self.lanes:
             known = {ln.id for ln in self.lanes}
             for n in self.real_nodes():
@@ -266,6 +332,14 @@ class Diagram:
                 item["fill"] = n.fill
             if n.stroke:
                 item["stroke"] = n.stroke
+            if n.responsibility:
+                item["responsibility"] = n.responsibility
+            if n.algorithms:
+                item["algorithms"] = [[code, name] for code, name in n.algorithms]
+            if n.process_model is not None:
+                item["process_model"] = [n.process_model[0], list(n.process_model[1])]
+            if n.attached_to is not None:
+                item["attached_to"] = n.attached_to
             nodes.append(item)
         edges = []
         for e in self.edges:
@@ -280,6 +354,10 @@ class Diagram:
                 item["src_port"] = e.src_port
             if e.dst_port:
                 item["dst_port"] = e.dst_port
+            if e.signals:
+                item["signals"] = list(e.signals)
+                if e.label == "\n".join(e.signals):
+                    item.pop("label", None)
             edges.append(item)
         out: dict[str, Any] = {"title": self.title, "kind": self.kind, "direction": self.direction}
         if self.frame:
@@ -303,13 +381,20 @@ class Diagram:
             if "id" not in n:
                 raise ValueError("every node needs an 'id'")
             comps = [(c[0], list(c[1])) for c in n.get("compartments", [])]
+            pm = n.get("process_model")
             d.node(n["id"], n.get("label"), n.get("kind", "action"), lane=n.get("lane"),
                    stereotype=n.get("stereotype"), compartments=comps,
-                   fill=n.get("fill"), stroke=n.get("stroke"))
+                   fill=n.get("fill"), stroke=n.get("stroke"),
+                   responsibility=n.get("responsibility", ""),
+                   algorithms=[(str(a[0]), str(a[1])) for a in n.get("algorithms", [])],
+                   process_model=(str(pm[0]), [str(x) for x in pm[1]]) if pm else None,
+                   attached_to=n.get("attached_to"))
         for e in data.get("edges", []):
             if "src" not in e or "dst" not in e:
                 raise ValueError("every edge needs 'src' and 'dst'")
-            d.edge(e["src"], e["dst"], e.get("label", ""), e.get("kind", "flow"),
+            signals = [str(x) for x in e.get("signals", [])]
+            label = e.get("label", "\n".join(signals))
+            d.edge(e["src"], e["dst"], label, e.get("kind", "flow"),
                    style=e.get("style", "solid"), src_port=e.get("src_port"),
-                   dst_port=e.get("dst_port"))
+                   dst_port=e.get("dst_port"), signals=signals)
         return d

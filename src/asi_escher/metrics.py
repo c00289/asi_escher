@@ -12,7 +12,7 @@ from functools import lru_cache
 from matplotlib.font_manager import FontProperties
 from matplotlib.textpath import TextPath
 
-from .model import Edge, Node
+from .model import CONTROL_NODE_KINDS, Edge, Node
 
 FONT_PX = 12.5            # body text height in px
 SMALL_PX = 10.5           # edge labels / stereotypes
@@ -22,6 +22,9 @@ LINE_H = FONT_PX * 1.3
 
 WRAP_WIDTH = 24           # characters per line for action-like nodes
 WRAP_WIDTH_DECISION = 20
+WRAP_WIDTH_CONTROL = 42   # characters per line inside a control-structure box
+CONTROL_PAD = 10.0        # inner padding of a control-structure box
+CONTROL_SECTION_GAP = 5.0
 
 _prop = FontProperties(family=FONT_FAMILY)
 _prop_b = FontProperties(family=FONT_FAMILY, weight="bold")
@@ -100,6 +103,9 @@ def size_node(n: Node) -> tuple[float, float]:
     if k in ("block", "requirement", "part", "object"):
         n.lines = n.label.split("\n")
         return _size_block(n)
+    if k in CONTROL_NODE_KINDS:
+        n.lines = wrap(n.label, 30) if n.label else [""]
+        return _size_control(n)
 
     lines = wrap(n.label, WRAP_WIDTH_DECISION if k == "decision" else WRAP_WIDTH)
     n.lines = lines
@@ -139,3 +145,49 @@ def _size_block(n: Node) -> tuple[float, float]:
         h += len(lines) * LINE_H + 8
     w = max(110.0, max(widths) + 28)
     return w, max(44.0, h)
+
+
+# ------------------------------------------------- control structures -----
+def control_sections(n: Node) -> list[tuple[str, list[str]]]:
+    """The stacked sections of a control-structure box as wrapped lines.
+
+    Returns ``[(kind, lines), ...]`` with kind ``"responsibility"``,
+    ``"algorithms"`` (``"V1  Name"`` per algorithm) or ``"process_model"``
+    (the title first, then one line per entry), in drawing order; a section
+    without content is left out.  Shared by the sizing, the renderer and the
+    exporters so every output agrees on the text of a box.
+    """
+    out: list[tuple[str, list[str]]] = []
+    if n.responsibility:
+        out.append(("responsibility", wrap(n.responsibility, WRAP_WIDTH_CONTROL)))
+    if n.algorithms:
+        lines: list[str] = []
+        for code, name in n.algorithms:
+            lines.extend(wrap(f"{code} {name}" if code else name, WRAP_WIDTH_CONTROL))
+        out.append(("algorithms", lines))
+    if n.process_model is not None:
+        title, entries = n.process_model
+        lines = wrap(title, WRAP_WIDTH_CONTROL) if title else []
+        for entry in entries:
+            lines.extend(wrap(entry, WRAP_WIDTH_CONTROL))
+        if lines:
+            out.append(("process_model", lines))
+    return out
+
+
+def control_section_height(lines: list[str]) -> float:
+    return len(lines) * LINE_H + 2 * CONTROL_SECTION_GAP
+
+
+def _size_control(n: Node) -> tuple[float, float]:
+    """Size of a control-structure box: the title, then its sections."""
+    widths = [text_width(line, TITLE_PX, bold=True) for line in n.lines]
+    h = CONTROL_PAD + len(n.lines) * TITLE_PX * 1.35 + CONTROL_PAD * 0.6
+    sections = control_sections(n)
+    for _, lines in sections:
+        widths.extend(text_width(line, FONT_PX) for line in lines)
+        h += control_section_height(lines)
+    h += CONTROL_PAD * 0.6 if sections else 0.0
+    if n.kind in ("sensor", "actuator") and not sections:
+        return max(96.0, max(widths) + 36), max(36.0, h)
+    return max(150.0, max(widths) + 2 * CONTROL_PAD + 6), max(44.0, h)

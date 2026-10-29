@@ -17,8 +17,23 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Ellipse, FancyBboxPatch, PathPatch, Polygon, Rectangle
 from matplotlib.path import Path
 
-from .metrics import DASHED_EDGE_KINDS, FONT_FAMILY, FONT_PX, LINE_H, SMALL_PX, TITLE_PX, edge_label, pt, text_width
-from .model import Diagram, Edge, Node
+from .metrics import (
+    CONTROL_PAD,
+    CONTROL_SECTION_GAP,
+    DASHED_EDGE_KINDS,
+    FONT_FAMILY,
+    FONT_PX,
+    LINE_H,
+    SMALL_PX,
+    TITLE_PX,
+    control_section_height,
+    control_sections,
+    edge_label,
+    pt,
+    text_width,
+)
+from .model import CONTROL_NODE_KINDS, Diagram, Edge, Node
+from .provenance import footer, slug
 
 _RC = {
     "svg.fonttype": "none",      # keep text as text in SVG
@@ -44,6 +59,18 @@ THEME = {
     "part": ("#EEF6FF", "#2F6DB5"),
     "requirement": ("#FDF0F0", "#B83232"),
     "object": ("#F4F4F4", "#5F6B7A"),
+    # control structures: box kinds, the two sections and the two arrow kinds
+    "controller": ("#FFFFFF", "#37474F"),
+    "human_controller": ("#FFFFFF", "#37474F"),
+    "controlled_process": ("#FFFFFF", "#37474F"),
+    "environment": ("#FAFAFA", "#546E7A"),
+    "external_system": ("#F5F5F5", "#78909C"),
+    "sensor": ("#F1F8E9", "#558B2F"),
+    "actuator": ("#FFF8E1", "#F9A825"),
+    "cs_algorithms": ("#FFF3E0", "#EF6C00"),
+    "cs_process_model": ("#E3F2FD", "#1565C0"),
+    "control_action": "#C62828",
+    "feedback": "#1565C0",
     "lane_a": "#FAFBFC",
     "lane_b": "#F1F4F8",
     "lane_line": "#B8C2CC",
@@ -53,13 +80,19 @@ THEME = {
 
 
 def render(d: Diagram, png: str | None = None, svg: str | None = None,
-           dpi: int = 160, theme: dict | None = None) -> Figure:
+           dpi: int = 160, theme: dict | None = None, provenance: bool = True,
+           name: str | None = None) -> Figure:
     """Draw a laid-out diagram.
 
     Writes ``png`` and/or ``svg`` when given (paths or file-like objects) and
     returns the matplotlib ``Figure`` so callers can embed or save it in other
     formats.  ``theme`` overrides entries of :data:`THEME`.  The diagram must
     have been passed through :func:`asi_escher.layout` first.
+
+    ``provenance`` draws a small grey footer line in the bottom-left corner
+    ("asi_escher <version>, <date>; layout shared with <name>.drawio", the
+    draw.io file :func:`asi_escher.to_drawio` writes for the same layout);
+    ``name`` defaults to the slug of the title.
     """
     th = dict(THEME)
     if theme:
@@ -83,6 +116,9 @@ def render(d: Diagram, png: str | None = None, svg: str | None = None,
             _draw_node(ax, n, th, d)
         for e in d.edges:
             _draw_edge_label(ax, e, th)
+        if provenance:
+            _text(ax, 6, H - 5, footer(name or slug(d.title)), size=SMALL_PX - 2, color="#9E9E9E",
+                  ha="left", va="bottom", italic=True)
 
         if png:
             fig.savefig(png, format="png", dpi=dpi, facecolor=th["bg"])
@@ -197,6 +233,8 @@ def _draw_node(ax, n: Node, th, d: Diagram):
         _text(ax, x, y + 3, n.text)
     elif k in ("block", "requirement", "part", "object"):
         _draw_block(ax, n, fill, stroke, th)
+    elif k in CONTROL_NODE_KINDS:
+        _draw_control_box(ax, n, fill, stroke, th)
     else:  # action, process, state
         rs = 9 if k != "state" else 14
         ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h,
@@ -237,20 +275,74 @@ def _draw_block(ax, n: Node, fill, stroke, th):
         cy += 4
 
 
+def _draw_control_box(ax, n: Node, fill, stroke, th):
+    """A control-structure box: the title, then the responsibility, the
+    algorithms (orange) and the process model (blue) as stacked sections.
+    The kind sets the border: double for the controlled process, dashed for
+    the environment, rounded for a human controller, plain otherwise; a
+    sensor is an ellipse-ended box and an actuator a box with a thick side."""
+    x, y, w, h = n.x, n.y, n.w, n.h
+    left, top = x - w / 2, y - h / 2
+    k = n.kind
+    z = 4
+    if k == "human_controller":
+        ax.add_patch(FancyBboxPatch((left, top), w, h, boxstyle="round,pad=0,rounding_size=12",
+                                    fc=fill, ec=stroke, lw=1.5, zorder=z))
+    elif k == "environment":
+        ax.add_patch(Rectangle((left, top), w, h, fc=fill, ec=stroke, lw=1.5, ls=(0, (6, 3)), zorder=z))
+    elif k == "controlled_process":
+        ax.add_patch(Rectangle((left, top), w, h, fc=fill, ec=stroke, lw=1.5, zorder=z))
+        ax.add_patch(Rectangle((left + 3.5, top + 3.5), w - 7, h - 7, fc="none", ec=stroke, lw=1.2, zorder=z + 1))
+    elif k == "sensor":
+        ax.add_patch(FancyBboxPatch((left, top), w, h, boxstyle=f"round,pad=0,rounding_size={h / 2}",
+                                    fc=fill, ec=stroke, lw=1.5, zorder=z))
+    elif k == "actuator":
+        ax.add_patch(Rectangle((left, top), w, h, fc=fill, ec=stroke, lw=1.5, zorder=z))
+        ax.add_patch(Rectangle((left, top), 6, h, fc=stroke, ec=stroke, lw=0, zorder=z + 1))
+    else:  # controller, external_system
+        ax.add_patch(Rectangle((left, top), w, h, fc=fill, ec=stroke, lw=1.5, zorder=z))
+    sections = control_sections(n)
+    title_lines = n.lines or [n.label]
+    title_h = len(title_lines) * TITLE_PX * 1.35
+    if not sections:
+        for i, line in enumerate(title_lines):
+            _text(ax, x, y - title_h / 2 + TITLE_PX * 0.7 + i * TITLE_PX * 1.35, line, size=TITLE_PX, bold=True)
+        return
+    cy = top + CONTROL_PAD
+    for i, line in enumerate(title_lines):
+        _text(ax, x, cy + TITLE_PX * 0.7 + i * TITLE_PX * 1.35, line, size=TITLE_PX, bold=True)
+    cy += title_h + CONTROL_PAD * 0.6
+    inset = 4.0 if k == "controlled_process" else 0.0
+    for kind, lines in sections:
+        sh = control_section_height(lines)
+        if kind in ("algorithms", "process_model"):
+            sfill, sstroke = th["cs_" + kind]
+            ax.add_patch(Rectangle((left + inset, cy), w - 2 * inset, sh, fc=sfill, ec=sstroke, lw=0.9,
+                                   zorder=z + 2))
+        else:
+            ax.plot([left + inset, left + w - inset], [cy, cy], color=stroke, lw=0.8, zorder=z + 2)
+        ty = cy + CONTROL_SECTION_GAP
+        for j, line in enumerate(lines):
+            bold = kind == "process_model" and j == 0 and bool(n.process_model and n.process_model[0])
+            _text(ax, left + CONTROL_PAD, ty + LINE_H / 2 + j * LINE_H, line, ha="left", bold=bold)
+        cy += sh
+
+
 # -------------------------------------------------------------- edges -----
 def _draw_edge(ax, d: Diagram, e: Edge, th):
     if not e.points:
         return
     pts = list(e.points)
-    color = th["edge"]
+    color = th[e.kind] if e.kind in ("control_action", "feedback") else th["edge"]
     ls = {"solid": "-", "dashed": (0, (5, 3)), "dotted": (0, (1.5, 2.5))}[e.style]
     if e.kind in DASHED_EDGE_KINDS:
         ls = (0, (5, 3))
-    lw = 1.3
+    lw = 1.5 if e.kind in ("control_action", "feedback") else 1.3
     head = {"flow": "filled", "dependency": "open", "satisfy": "open", "derive": "open",
             "verify": "open", "refine": "open", "allocate": "open", "generalization": "triangle",
             "composition": "none", "aggregation": "none", "association": "none",
-            "connector": "none", "itemflow": "filled"}[e.kind]
+            "connector": "none", "itemflow": "filled",
+            "control_action": "filled", "feedback": "filled"}[e.kind]
     tail = {"composition": "fdiamond", "aggregation": "odiamond"}.get(e.kind, "none")
 
     # shorten line for decorations
@@ -292,7 +384,8 @@ def _draw_edge_label(ax, e: Edge, th):
     if not label or not e.label_pos:
         return
     x, y = e.label_pos
-    _text(ax, x, y, label, size=SMALL_PX, ha=e.label_ha, va=e.label_va, bg=th["label_bg"])
+    color = th[e.kind] if e.kind in ("control_action", "feedback") else th["ink"]
+    _text(ax, x, y, label, size=SMALL_PX, color=color, ha=e.label_ha, va=e.label_va, bg=th["label_bg"])
 
 
 def _unit(a, b):
