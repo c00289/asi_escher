@@ -1,0 +1,193 @@
+{
+  "title": "Demo Safety Programme Plan",
+  "kind": "gantt",
+  "today": "2026-10-02",
+  "periods": [
+    {
+      "label": "Sprint 1",
+      "start": "2026-09-01",
+      "end": "2026-09-14"
+    },
+    {
+      "label": "Sprint 2",
+      "start": "2026-09-15",
+      "end": "2026-09-28"
+    },
+    {
+      "label": "Sprint 3",
+      "start": "2026-09-29",
+      "end": "2026-10-12"
+    },
+    {
+      "label": "Sprint 4",
+      "start": "2026-10-13",
+      "end": "2026-10-26"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "scope",
+      "title": "Scope definition",
+      "start": "2026-09-01",
+      "end": "2026-09-05",
+      "status": "done",
+      "owner": "Programme lead",
+      "group": "Concept"
+    },
+    {
+      "id": "hazards",
+      "title": "Hazard list",
+      "start": "2026-09-08",
+      "end": "2026-10-09",
+      "status": "active",
+      "owner": "Safety engineer",
+      "group": "Concept",
+      "note": "second review open"
+    },
+    {
+      "id": "standards",
+      "title": "Standards review",
+      "start": "2026-09-03",
+      "end": "2026-09-10",
+      "status": "done",
+      "owner": "Safety engineer",
+      "group": "Concept"
+    },
+    {
+      "id": "supplier",
+      "title": "Supplier failure data",
+      "start": "2026-09-15",
+      "end": "2026-09-26",
+      "owner": "Supplier",
+      "group": "Analysis",
+      "note": "second reminder sent"
+    },
+    {
+      "id": "metrics",
+      "title": "Hardware metrics",
+      "start": "2026-09-29",
+      "end": "2026-10-02",
+      "owner": "Hardware engineer",
+      "group": "Analysis"
+    },
+    {
+      "id": "risk",
+      "title": "Risk assessment",
+      "start": "2026-10-12",
+      "end": "2026-10-23",
+      "owner": "Safety engineer",
+      "group": "Analysis"
+    },
+    {
+      "id": "concept",
+      "title": "Safety concept",
+      "start": "2026-10-26",
+      "end": "2026-11-06",
+      "owner": "Systems engineer",
+      "group": "Design"
+    },
+    {
+      "id": "reqs",
+      "title": "Safety requirements",
+      "start": "2026-11-09",
+      "end": "2026-11-20",
+      "owner": "Systems engineer",
+      "group": "Design"
+    },
+    {
+      "id": "design",
+      "title": "Safety design",
+      "start": "2026-11-23",
+      "end": "2026-12-04",
+      "owner": "Hardware engineer",
+      "group": "Design"
+    },
+    {
+      "id": "testplan",
+      "title": "Verification plan",
+      "start": "2026-11-09",
+      "end": "2026-11-13",
+      "owner": "Test lead",
+      "group": "Verification"
+    },
+    {
+      "id": "verification",
+      "title": "Verification",
+      "start": "2026-12-07",
+      "end": "2026-12-18",
+      "owner": "Test lead",
+      "group": "Verification"
+    },
+    {
+      "id": "assessment",
+      "title": "Safety assessment",
+      "start": "2026-12-21",
+      "end": "2026-12-23",
+      "owner": "Assessor",
+      "group": "Verification"
+    },
+    {
+      "id": "release",
+      "title": "Release for operation",
+      "start": "2026-12-28",
+      "end": "2026-12-28",
+      "kind": "milestone",
+      "owner": "Programme lead",
+      "group": "Verification"
+    }
+  ],
+  "edges": [
+    {
+      "src": "scope",
+      "dst": "hazards"
+    },
+    {
+      "src": "hazards",
+      "dst": "risk"
+    },
+    {
+      "src": "supplier",
+      "dst": "metrics"
+    },
+    {
+      "src": "supplier",
+      "dst": "risk"
+    },
+    {
+      "src": "risk",
+      "dst": "concept"
+    },
+    {
+      "src": "concept",
+      "dst": "reqs"
+    },
+    {
+      "src": "reqs",
+      "dst": "design"
+    },
+    {
+      "src": "metrics",
+      "dst": "design"
+    },
+    {
+      "src": "concept",
+      "dst": "testplan"
+    },
+    {
+      "src": "design",
+      "dst": "verification"
+    },
+    {
+      "src": "testplan",
+      "dst": "verification"
+    },
+    {
+      "src": "verification",
+      "dst": "assessment"
+    },
+    {
+      "src": "assessment",
+      "dst": "release"
+    }
+  ]
+}

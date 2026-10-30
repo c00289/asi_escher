@@ -15,8 +15,10 @@ from typing import Any
 # for ``control_structure``, the layout rules of an STPA control structure
 # (top-down by hierarchy, control actions left and feedback right) and, for
 # ``chain``, those of a precedence network (left to right by the deepest
-# predecessor, the critical path on one row); it is otherwise informational.
-DIAGRAM_KINDS = {"activity", "flowchart", "state", "bdd", "ibd", "req", "control_structure", "chain"}
+# predecessor, the critical path on one row) and, for ``gantt``, those of a
+# gantt chart (one row per task, bars on a day scale); it is otherwise
+# informational.
+DIAGRAM_KINDS = {"activity", "flowchart", "state", "bdd", "ibd", "req", "control_structure", "chain", "gantt"}
 
 # Node kinds of an STPA control structure: boxes with a responsibility, an
 # algorithms section and a process-model section.  The kind drives the box
@@ -39,12 +41,18 @@ CHAIN_NODE_KINDS = {"event", "milestone", "gate", "external"}
 # marked blocked, is blocked (see :meth:`Diagram.status`).
 CHAIN_STATUSES = {"done", "active", "blocked", "pending", "late"}
 
+# Node kinds of a gantt chart: a task is a bar from its start date to its
+# end date, a milestone a diamond on one date.  The statuses are the
+# chain's; ``late`` is derived for a task that is not done once the chart's
+# ``today`` is past its end (see :meth:`Diagram.status`).
+GANTT_NODE_KINDS = {"task", "milestone"}
+
 # Node kinds understood by the layout engine, renderer and exporters.
 NODE_KINDS = {
     "start", "end", "flowfinal", "action", "decision", "merge", "fork", "join",
     "note", "state", "block", "part", "requirement", "object", "io",
     "process", "document", "database", "dummy",
-} | CONTROL_NODE_KINDS | CHAIN_NODE_KINDS
+} | CONTROL_NODE_KINDS | CHAIN_NODE_KINDS | GANTT_NODE_KINDS
 
 # Edge kinds of a control structure: a control action points down the
 # hierarchy (red), feedback points up (blue); both carry numbered signals.
@@ -59,12 +67,17 @@ CHAIN_EDGE_KINDS = {"blocks", "enables", "informs"}
 # predecessor.  ``informs`` is left out on purpose.
 PRECEDENCE_KINDS = ("blocks", "enables")
 
+# The one edge kind of a gantt chart: the successor starts after the
+# predecessor ends, drawn as an elbow from the end of one bar to the start
+# of the next.
+GANTT_EDGE_KINDS = {"depends"}
+
 # Edge kinds. "flow" is the default control/object flow arrow.
 EDGE_KINDS = {
     "flow", "dependency", "composition", "aggregation", "generalization",
     "association", "connector", "satisfy", "derive", "verify", "refine",
     "allocate", "itemflow",
-} | CONTROL_EDGE_KINDS | CHAIN_EDGE_KINDS
+} | CONTROL_EDGE_KINDS | CHAIN_EDGE_KINDS | GANTT_EDGE_KINDS
 
 EDGE_STYLES = {"solid", "dashed", "dotted"}
 
@@ -97,6 +110,11 @@ class Node:
     due: str = ""
     note: str = ""
     effort: int | None = None
+    # gantt task fields: the start and end dates (ISO, the end inclusive) of
+    # the bar and the group whose band the row belongs to
+    start: str = ""
+    end: str = ""
+    group: str = ""
     # layout results (centre x/y, width/height, layer index, order in layer,
     # and the label as wrapped lines).  The author's ``label`` is never changed.
     x: float = 0.0
@@ -159,6 +177,15 @@ class Lane:
 
 
 @dataclass
+class Period:
+    """A named span of a gantt chart's time scale (a sprint, a quarter), drawn
+    as a band of the header with a grid line at its start; ``end`` inclusive."""
+    label: str
+    start: str
+    end: str
+
+
+@dataclass
 class LayoutIssue:
     """A place where the layout had to settle for a degraded result.
 
@@ -188,7 +215,8 @@ class Diagram:
         One of :data:`DIAGRAM_KINDS`.
     direction:
         ``"TB"`` (top to bottom) or ``"LR"`` (left to right); when not given,
-        a chain runs left to right and every other kind top to bottom.
+        a chain and a gantt run left to right and every other kind top to
+        bottom.
     frame:
         Optional SysML frame header, e.g. ``"bdd [Package] Loader"``.  When
         set, the renderer draws a diagram frame with a name tab.
@@ -199,7 +227,7 @@ class Diagram:
         if kind not in DIAGRAM_KINDS:
             raise ValueError(f"unknown diagram kind {kind!r}; expected one of {sorted(DIAGRAM_KINDS)}")
         if direction is None:
-            direction = "LR" if kind == "chain" else "TB"
+            direction = "LR" if kind in ("chain", "gantt") else "TB"
         if direction not in DIRECTIONS:
             raise ValueError(f"direction must be 'TB' or 'LR', got {direction!r}")
         self.title = title
@@ -209,6 +237,10 @@ class Diagram:
         self.nodes: dict[str, Node] = {}
         self.edges: list[Edge] = []
         self.lanes: list[Lane] = []
+        # a gantt chart's time scale: the named periods of its header and the
+        # date its today line marks (``None`` for no line)
+        self.periods: list[Period] = []
+        self.today: str | None = None
         # layout results
         self.width = 0.0
         self.height = 0.0
@@ -216,6 +248,7 @@ class Diagram:
         self.lane_bottom = 0.0
         self.lane_header = 0.0
         self.issues: list[LayoutIssue] = []
+        self.gantt: dict[str, Any] = {}     # the chart's chrome, filled by the gantt layout
 
     # --- construction helpers -------------------------------------------
     def node(self, id: str, label: str | None = None, kind: str = "action", **kw) -> Node:
@@ -348,6 +381,59 @@ class Diagram:
         if kind not in CHAIN_EDGE_KINDS:
             raise ValueError(f"unknown chain edge kind {kind!r}; expected one of {sorted(CHAIN_EDGE_KINDS)}")
         return self.edge(predecessor, successor, label, kind, **kw)
+
+    # gantt charts
+    def task(self, id, title=None, start="", end="", *, status="pending", kind="task", owner="",
+             group="", note="", effort=None, **kw):
+        """A task of a gantt chart: a bar from ``start`` to ``end`` (ISO
+        dates, the end inclusive) on the row titled ``title``, with the
+        ``owner`` in the small column beside it, the ``note`` after the bar,
+        under the band of ``group`` when given.  ``status`` is one of
+        :data:`CHAIN_STATUSES` (the bar colour; a task that is not done is
+        drawn late once ``today`` is past its end, see :meth:`status`),
+        ``kind`` one of :data:`GANTT_NODE_KINDS`."""
+        from .gantt import parse_date
+
+        if status not in CHAIN_STATUSES:
+            raise ValueError(f"unknown task status {status!r}; expected one of {sorted(CHAIN_STATUSES)}")
+        if kind not in GANTT_NODE_KINDS:
+            raise ValueError(f"unknown task kind {kind!r}; expected one of {sorted(GANTT_NODE_KINDS)}")
+        if effort is not None and (isinstance(effort, bool) or not isinstance(effort, int) or effort < 0):
+            raise ValueError(f"effort of task {id!r} must be a non-negative integer, got {effort!r}")
+        end = end or start
+        a, b = parse_date(start, f"start of task {id!r}"), parse_date(end, f"end of task {id!r}")
+        if b < a:
+            raise ValueError(f"task {id!r} ends ({end}) before it starts ({start})")
+        return self.node(id, title, kind, status=status, owner=str(owner or ""), group=str(group or ""),
+                         note=str(note or ""), effort=effort, start=a.isoformat(), end=b.isoformat(), **kw)
+
+    def milestone(self, id, title=None, date="", **kw):
+        """A milestone of a gantt chart: a diamond on ``date``."""
+        return self.task(id, title, date, date, kind="milestone", **kw)
+
+    def depends(self, predecessor, successor, **kw):
+        """A dependency of a gantt chart: an elbow from the end of
+        ``predecessor``'s bar to the start of ``successor``'s."""
+        return self.edge(predecessor, successor, "", "depends", **kw)
+
+    def period(self, label, start, end) -> Period:
+        """A named span of the time scale (a sprint, a quarter): a band of the
+        header with a grid line at its start; ``end`` inclusive."""
+        from .gantt import parse_date
+
+        a, b = parse_date(start, f"start of period {label!r}"), parse_date(end, f"end of period {label!r}")
+        if b < a:
+            raise ValueError(f"period {label!r} ends ({end}) before it starts ({start})")
+        p = Period(str(label), a.isoformat(), b.isoformat())
+        self.periods.append(p)
+        return p
+
+    def mark(self, today) -> None:
+        """Set the date of the today line (``None`` removes it); a task that is
+        not done and ends before it is drawn late."""
+        from .gantt import parse_date
+
+        self.today = parse_date(today, "today").isoformat() if today else None
 
     # --- queries -----------------------------------------------------------
     def real_nodes(self) -> list[Node]:
@@ -516,10 +602,16 @@ class Diagram:
     def status(self, id: str) -> str:
         """The effective status of an event: the one given, except that a
         ``pending`` event with a direct ``blocks`` predecessor that is late or
-        blocked (as given) is ``blocked``."""
+        blocked (as given) is ``blocked``.  Of a gantt task: the one given,
+        except that a pending or active task whose end is before the chart's
+        ``today`` is ``late``."""
         self._require(id)
         n = self.nodes[id]
         given = n.status or "pending"
+        if self.kind == "gantt":
+            if given in ("pending", "active") and self.today and n.end and n.end < self.today:
+                return "late"
+            return given
         if given != "pending":
             return given
         for e in self.edges:
@@ -529,8 +621,9 @@ class Diagram:
         return given
 
     def statuses(self) -> dict[str, str]:
-        """The effective status of every chain event (see :meth:`status`)."""
-        return {n.id: self.status(n.id) for n in self.real_nodes() if n.kind in CHAIN_NODE_KINDS}
+        """The effective status of every chain event or gantt task (see :meth:`status`)."""
+        kinds = GANTT_NODE_KINDS if self.kind == "gantt" else CHAIN_NODE_KINDS
+        return {n.id: self.status(n.id) for n in self.real_nodes() if n.kind in kinds}
 
     def blockers(self, id: str) -> list[str]:
         """The events that stand between ``id`` and being workable: every
@@ -599,6 +692,8 @@ class Diagram:
         :meth:`_chain_dict`); every other kind as ``nodes`` and ``edges``."""
         if self.kind == "chain":
             return self._chain_dict()
+        if self.kind == "gantt":
+            return self._gantt_dict()
         nodes = []
         for n in self.real_nodes():
             item: dict[str, Any] = {"id": n.id, "label": n.label, "kind": n.kind}
@@ -671,15 +766,44 @@ class Diagram:
         return {"title": self.title, "kind": "chain", "direction": self.direction, "events": events,
                 "edges": edges}
 
+    def _gantt_dict(self) -> dict[str, Any]:
+        """The gantt spec: ``today`` when set, ``periods`` (``label``,
+        ``start``, ``end``), ``tasks`` (``id``, ``title``, ``start``, ``end``
+        and, when set, ``kind``, ``status``, ``owner``, ``group``, ``note``,
+        ``effort``) and ``edges`` (``src``, ``dst``)."""
+        tasks = []
+        for n in self.real_nodes():
+            item: dict[str, Any] = {"id": n.id, "title": n.label, "start": n.start, "end": n.end}
+            if n.kind != "task":
+                item["kind"] = n.kind
+            if n.status and n.status != "pending":
+                item["status"] = n.status
+            for key in ("owner", "group", "note"):
+                if getattr(n, key):
+                    item[key] = getattr(n, key)
+            if n.effort is not None:
+                item["effort"] = n.effort
+            tasks.append(item)
+        out: dict[str, Any] = {"title": self.title, "kind": "gantt"}
+        if self.today:
+            out["today"] = self.today
+        out["periods"] = [{"label": p.label, "start": p.start, "end": p.end} for p in self.periods]
+        out["tasks"] = tasks
+        out["edges"] = [{"src": e.src, "dst": e.dst} for e in self.edges]
+        return out
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Diagram:
         """Build a diagram from the structure produced by :meth:`to_dict`: the
-        general form (``nodes`` and ``edges``) or a chain spec (``events`` and
-        ``edges``; ``kind`` defaults to ``chain`` then)."""
+        general form (``nodes`` and ``edges``), a chain spec (``events`` and
+        ``edges``; ``kind`` defaults to ``chain`` then) or a gantt spec
+        (``tasks``; ``kind`` defaults to ``gantt``)."""
         if "title" not in data:
             raise ValueError("diagram spec needs a 'title'")
         if "events" in data:
             return cls._chain_from_dict(data)
+        if "tasks" in data:
+            return cls._gantt_from_dict(data)
         d = cls(data["title"], data.get("kind", "activity"), data.get("direction"),
                 data.get("frame"))
         for ln in data.get("lanes", []):
@@ -721,6 +845,27 @@ class Diagram:
             if "src" not in e or "dst" not in e:
                 raise ValueError("every edge needs 'src' and 'dst'")
             d.blocks(e["src"], e["dst"], kind=e.get("kind", "blocks"), label=e.get("label", ""))
+        return d
+
+    @classmethod
+    def _gantt_from_dict(cls, data: dict[str, Any]) -> Diagram:
+        d = cls(data["title"], data.get("kind", "gantt"), data.get("direction"), data.get("frame"))
+        if data.get("today"):
+            d.mark(data["today"])
+        for p in data.get("periods", []):
+            if "label" not in p or "start" not in p or "end" not in p:
+                raise ValueError("every period needs 'label', 'start' and 'end'")
+            d.period(p["label"], p["start"], p["end"])
+        for t in data["tasks"]:
+            if "id" not in t or "start" not in t:
+                raise ValueError("every task needs an 'id' and a 'start'")
+            d.task(t["id"], t.get("title", t.get("label")), t["start"], t.get("end", t["start"]),
+                   status=t.get("status", "pending"), kind=t.get("kind", "task"), owner=t.get("owner", ""),
+                   group=t.get("group", ""), note=t.get("note", ""), effort=t.get("effort"))
+        for e in data.get("edges", []):
+            if "src" not in e or "dst" not in e:
+                raise ValueError("every edge needs 'src' and 'dst'")
+            d.depends(e["src"], e["dst"])
         return d
 
 

@@ -17,6 +17,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Ellipse, FancyBboxPatch, PathPatch, Polygon, Rectangle
 from matplotlib.path import Path
 
+from .gantt import HEADER_H, LABEL_PAD, is_task
 from .metrics import (
     CHAIN_GATE_INSET,
     CHAIN_POINT,
@@ -85,6 +86,12 @@ THEME = {
     "status_pending": ("#FFFFFF", "#37474F"),
     "status_late": ("#FFE3A8", "#C98A1B"),
     "chain_small": "#52606D",
+    # gantt charts: a bar takes the status colours, the chrome these
+    "task": ("#FFFFFF", "#37474F"),
+    "gantt_header": "#E3E8EE",
+    "gantt_group": "#EDF1F5",
+    "gantt_grid": "#B8C2CC",
+    "today": "#C62828",
     "dim": 0.22,                 # opacity of what a ``focus`` rendering dims
     "lane_a": "#FAFBFC",
     "lane_b": "#F1F4F8",
@@ -131,6 +138,8 @@ def render(d: Diagram, png: str | None = None, svg: str | None = None,
 
         _draw_lanes(ax, d, th)
         _draw_frame(ax, d, th)
+        if d.kind == "gantt":
+            _draw_gantt_chrome(ax, d, th)
         dim = float(th["dim"])
         for e in d.edges:
             _draw_edge(ax, e, th, thick=(e.src, e.dst) in critical,
@@ -155,7 +164,13 @@ def render(d: Diagram, png: str | None = None, svg: str | None = None,
 def _chain_emphasis(d: Diagram, focus: str | None):
     """What a chain rendering needs beyond the geometry: the effective status
     of every event, the edges of the critical path and, with ``focus``, the
-    lit nodes and edges (``None`` for both when nothing is dimmed)."""
+    lit nodes and edges (``None`` for both when nothing is dimmed).  A gantt
+    chart has effective statuses too (a task past its end is late) and no
+    critical path or focus."""
+    if d.kind == "gantt":
+        if focus is not None:
+            raise ValueError("focus= needs a chain diagram")
+        return d.statuses(), set(), None, None
     if not any(n.kind in CHAIN_NODE_KINDS for n in d.nodes.values()):
         if focus is not None:
             raise ValueError("focus= needs a chain diagram")
@@ -226,6 +241,9 @@ def _draw_frame(ax, d, th):
 def _draw_node(ax, n: Node, th, status: str = "pending", alpha: float = 1.0):
     k = n.kind
     if k == "dummy":
+        return
+    if is_task(n):                      # before the chain kinds: both have a "milestone"
+        _draw_gantt_bar(ax, n, status, th, alpha)
         return
     if k in CHAIN_NODE_KINDS:
         _draw_chain_box(ax, n, status, th, alpha)
@@ -367,6 +385,67 @@ def _draw_chain_box(ax, n: Node, status: str, th, alpha: float = 1.0):
               italic=(kind == "note"), alpha=alpha)
 
 
+def _draw_gantt_bar(ax, n: Node, status: str, th, alpha: float = 1.0):
+    """A gantt task: a bar from its start to its end in the colours of its
+    effective status; a milestone a solid diamond on its date, in the
+    status's stroke colour so it reads as a marker."""
+    fill, stroke = th.get("status_" + status, th["status_pending"])
+    fill = n.fill or fill
+    stroke = n.stroke or stroke
+    if n.kind == "milestone":
+        x, y, r = n.x, n.y, n.w / 2
+        ax.add_patch(Polygon([(x, y - r), (x + r, y), (x, y + r), (x - r, y)], closed=True, fc=stroke, ec=stroke,
+                             lw=1.0, zorder=4, **_alpha_kw(alpha)))
+        return
+    ax.add_patch(FancyBboxPatch((n.left, n.top), n.w, n.h, boxstyle="round,pad=0,rounding_size=3",
+                                fc=fill, ec=stroke, lw=1.2, zorder=4, **_alpha_kw(alpha)))
+
+
+def _draw_gantt_chrome(ax, d: Diagram, th):
+    """Everything of a gantt chart that is not a bar or a dependency: the
+    group bands and the alternating row stripes, the header (the periods,
+    then the months), the grid at the period starts and the month ticks,
+    the title and owner columns, the notes after the bars and the today
+    line.  The geometry is :func:`asi_escher.gantt.layout_gantt`'s
+    ``d.gantt``; the draw.io export draws the same pieces from it."""
+    g = d.gantt
+    if not g:
+        return
+    x0, x1, y0 = g["x0"], g["x1"], g["y0"]
+    rows_top, rows_bottom = g["rows_top"], g["rows_bottom"]
+    left = g["title_x"] - LABEL_PAD
+    right = d.width - left
+    for i, r in enumerate(g["rows"]):
+        if r["kind"] == "group":
+            ax.add_patch(Rectangle((left, r["y"]), right - left, r["h"], fc=th["gantt_group"], ec="none", zorder=0))
+            _text(ax, g["title_x"], r["y"] + r["h"] / 2, r["title"], size=SMALL_PX + 1, bold=True, ha="left")
+        elif i % 2:
+            ax.add_patch(Rectangle((left, r["y"]), right - left, r["h"], fc=th["lane_b"], ec="none", zorder=0))
+    months_y = y0 + (HEADER_H if g["periods"] else 0.0)
+    for i, (label, xa, xb) in enumerate(g["periods"]):
+        fill = th["gantt_header"] if i % 2 == 0 else th["lane_b"]
+        ax.add_patch(Rectangle((xa, y0), xb - xa, HEADER_H, fc=fill, ec=th["gantt_grid"], lw=0.8, zorder=1))
+        _text(ax, (xa + xb) / 2, y0 + HEADER_H / 2, label, size=SMALL_PX - 1, bold=True)
+        ax.plot([xa, xa], [rows_top, rows_bottom], color=th["gantt_grid"], lw=0.8, zorder=1)
+    ax.add_patch(Rectangle((x0, months_y), x1 - x0, HEADER_H, fc="none", ec=th["gantt_grid"], lw=0.8, zorder=1))
+    for label, x in g["months"]:
+        _text(ax, x + 3, months_y + HEADER_H / 2, label, size=SMALL_PX - 1, color=th["chain_small"], ha="left")
+        ax.plot([x, x], [months_y, rows_bottom], color=th["gantt_grid"], lw=0.5, ls=(0, (2, 3)), zorder=1)
+    ax.add_patch(Rectangle((x0, rows_top), x1 - x0, rows_bottom - rows_top, fc="none", ec=th["gantt_grid"],
+                           lw=0.8, zorder=1))
+    for n in d.real_nodes():
+        _text(ax, g["title_x"], n.y, n.label, bold=True, ha="left")
+        if n.owner:
+            _text(ax, g["owner_x"], n.y, n.owner, size=SMALL_PX, color=th["chain_small"], ha="left")
+    for _nid, nx, ny, note in g["notes"]:
+        # on a white backing, so a dependency's channel running past the bar does not cross the words
+        _text(ax, nx, ny, note, size=SMALL_PX, color=th["chain_small"], ha="left", bg=th["label_bg"])
+    if g["today_x"] is not None:
+        tx = g["today_x"]
+        ax.plot([tx, tx], [months_y, rows_bottom], color=th["today"], lw=1.6, zorder=5)
+        _text(ax, tx + 4, rows_top + 7, "today", size=SMALL_PX - 1, color=th["today"], ha="left")
+
+
 def _draw_control_box(ax, n: Node, fill, stroke, th):
     """A control-structure box: the title, then the responsibility, the
     algorithms (orange) and the process model (blue) as stacked sections.
@@ -431,7 +510,8 @@ def _draw_edge(ax, e: Edge, th, thick: bool = False, alpha: float = 1.0):
     ls = {"solid": "-", "dashed": (0, (5, 3)), "dotted": (0, (1.5, 2.5))}[e.style]
     if e.kind in DASHED_EDGE_KINDS:
         ls = (0, (5, 3))
-    lw = {"control_action": 1.5, "feedback": 1.5, "blocks": 1.5, "enables": 0.9, "informs": 1.1}.get(e.kind, 1.3)
+    lw = {"control_action": 1.5, "feedback": 1.5, "blocks": 1.5, "enables": 0.9, "informs": 1.1,
+          "depends": 1.1}.get(e.kind, 1.3)
     if thick:
         lw *= 1.9
     head = {"flow": "filled", "dependency": "open", "satisfy": "open", "derive": "open",
@@ -439,7 +519,7 @@ def _draw_edge(ax, e: Edge, th, thick: bool = False, alpha: float = 1.0):
             "composition": "none", "aggregation": "none", "association": "none",
             "connector": "none", "itemflow": "filled",
             "control_action": "filled", "feedback": "filled",
-            "blocks": "filled", "enables": "filled", "informs": "open"}[e.kind]
+            "blocks": "filled", "enables": "filled", "informs": "open", "depends": "filled"}[e.kind]
     tail = {"composition": "fdiamond", "aggregation": "odiamond"}.get(e.kind, "none")
 
     # shorten line for decorations

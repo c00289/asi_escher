@@ -32,10 +32,11 @@ class LayoutOptions:
     lane_header:  height of the swimlane title strip
     iterations:   barycenter ordering sweeps
     back_channel: distance of the back-edge channel from the rightmost node
+    day_px:       a gantt chart's scale, pixels per day
     """
 
     def __init__(self, ranksep=56.0, nodesep=34.0, margin=36.0, lane_pad=26.0,
-                 lane_header=30.0, iterations=16, back_channel=36.0):
+                 lane_header=30.0, iterations=16, back_channel=36.0, day_px=4.0):
         self.ranksep = ranksep
         self.nodesep = nodesep
         self.margin = margin
@@ -43,6 +44,7 @@ class LayoutOptions:
         self.lane_header = lane_header
         self.iterations = iterations
         self.back_channel = back_channel
+        self.day_px = day_px
 
     @classmethod
     def for_kind(cls, kind: str) -> LayoutOptions:
@@ -70,6 +72,15 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
     ``warnings.filterwarnings("ignore", category=LayoutWarning)``.
     """
     opts = opts or LayoutOptions.for_kind(d.kind)
+    if d.kind == "gantt":
+        # a time scale, not a graph: rows and bars by date (see gantt.py)
+        from .gantt import layout_gantt
+
+        layout_gantt(d, opts)
+        if d.issues:
+            warnings.warn(f"{len(d.issues)} layout issue(s) in diagram {d.title!r}: "
+                          + "; ".join(i.message for i in d.issues[:3]), LayoutWarning, stacklevel=2)
+        return d
     d.validate()
     d.issues = []
     # drop stale dummies if re-laying out

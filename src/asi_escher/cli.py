@@ -11,7 +11,8 @@
 A spec file is the JSON form of :meth:`asi_escher.Diagram.to_dict`; see
 README.md for the schema.  ``export`` writes the format set shared with the
 sibling tools (``drawio`` and ``png`` by default); ``build`` writes any of
-the five formats, all of them by default.
+the five formats, all of them by default.  ``--day-px`` sets a gantt
+chart's scale (pixels per day, default 4).
 """
 from __future__ import annotations
 
@@ -48,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
                         help=f"comma-separated subset of {','.join(ALL_FORMATS)} (default: all)")
         sp.add_argument("--ranksep", type=float, help="gap between layers in px")
         sp.add_argument("--nodesep", type=float, help="gap between nodes in a layer in px")
+        sp.add_argument("--day-px", type=float, dest="day_px", help="a gantt chart's scale, pixels per day")
         sp.add_argument("--no-provenance", action="store_true",
                         help="no footer on the renderings, no comment and note in the draw.io file")
         sp.add_argument("--ocr", action="store_true",
@@ -66,6 +68,7 @@ def _parser() -> argparse.ArgumentParser:
     x.add_argument("--all", action="store_true", help=f"write every format ({', '.join(FORMATS)})")
     x.add_argument("--name", help="output file stem (default: slug of title)")
     x.add_argument("--dpi", type=int, default=160, help="PNG resolution (default: 160)")
+    x.add_argument("--day-px", type=float, dest="day_px", help="a gantt chart's scale, pixels per day")
     x.add_argument("--no-provenance", action="store_true",
                    help="no footer on the renderings, no comment and note in the draw.io file")
     x.add_argument("--ocr", action="store_true",
@@ -94,7 +97,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _opts(args) -> LayoutOptions | None:
-    kw = {k: v for k, v in (("ranksep", getattr(args, "ranksep", None)), ("nodesep", getattr(args, "nodesep", None)))
+    kw = {k: v for k, v in (("ranksep", getattr(args, "ranksep", None)), ("nodesep", getattr(args, "nodesep", None)),
+                            ("day_px", getattr(args, "day_px", None)))
           if v is not None}
     return LayoutOptions(**kw) if kw else None
 
@@ -167,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "export":
             formats = tuple(FORMATS) if args.all else tuple(dict.fromkeys(args.format or DEFAULT_FORMATS))
             d = _load_spec(args.spec)
-            _report(build(d, args.out, args.name, dpi=args.dpi, formats=formats,
+            _report(build(d, args.out, args.name, opts=_opts(args), dpi=args.dpi, formats=formats,
                           provenance=not args.no_provenance, ocr=args.ocr, focus=args.focus))
             return 0
         if args.cmd == "example":

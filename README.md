@@ -6,7 +6,7 @@ Pure-Python diagram generator for engineering documentation. Describe a
 diagram in a few lines of Python (or a JSON file), and asi_escher lays it out,
 writes it as an editable **draw.io** file and renders it to **PNG** and
 **SVG**, plus **Graphviz DOT** and **Mermaid** source, with no draw.io,
-Graphviz, Node or browser needed. Version **0.3.0**, alpha.
+Graphviz, Node or browser needed. Version **0.4.0**, alpha.
 
 Supported diagram families:
 
@@ -18,6 +18,7 @@ Supported diagram families:
 | SysML BDD / IBD / REQ | block, part, requirement + composition, aggregation, generalization, connector, itemflow, satisfy, derive, verify, refine, allocate | structure, interfaces, traceability |
 | STPA control structure | controller, human_controller, controlled_process, environment, sensor, actuator, external_system, note + control_action, feedback | hazard analysis: who controls what, through which signals |
 | Chain | event, milestone, gate, external + blocks, enables, informs | a plan's precedence network: what is a blocker for what, the critical path |
+| Gantt | task, milestone + depends; periods and a today line | the plan on a time scale: bars by date under the sprints, what is late |
 
 ![Swimlane activity diagram](docs/img/activity_swimlanes_estop.png)
 
@@ -70,7 +71,7 @@ asi-escher = { path = "../asi_escher", editable = true }
 ```
 
 A pinned git source works the same way:
-`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.3.0" }`.
+`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.4.0" }`.
 
 This folder lives in OneDrive, which rejects the hardlinks uv normally makes
 from its cache; `pyproject.toml` therefore sets `tool.uv.link-mode = "copy"`
@@ -134,7 +135,7 @@ asi_escher's renderings of that same layout, not draw.io exports.
 
 Every output says so: the `.drawio` carries an XML comment after the
 `<mxfile>` opening and a small grey note under the drawing, and the PNG and
-SVG a grey footer line in the bottom-left corner ("asi_escher 0.3.0,
+SVG a grey footer line in the bottom-left corner ("asi_escher 0.4.0,
 2026-10-29; layout shared with `<slug>.drawio`"). `provenance=False` on
 `build()`, `render()` or `to_drawio()` (`--no-provenance` on the command
 line) switches the marks off; `name=` sets the stem they name.
@@ -303,6 +304,99 @@ status (done / in progress / to do mapped to `done` / `active` / `pending`,
 and the critical path.
 
 ![Chain](docs/img/chain_demo.png)
+
+### Gantt charts
+
+The `gantt` kind draws a plan on a time scale: one row per task, its bar
+from its start date to its end date on a shared day scale, the periods
+(sprints, quarters) and the months as the header, a group band wherever a
+new group starts, the dependencies as elbows from the end of one bar to the
+start of the next, and a today line. It is the chain's companion: the chain
+says what blocks what, the gantt says when.
+
+```python
+d = Diagram("Demo Safety Programme Plan", "gantt")
+d.period("Sprint 1", "2026-09-01", "2026-09-14")
+d.period("Sprint 2", "2026-09-15", "2026-09-28")
+d.mark("2026-09-17")
+d.task("scope", "Scope definition", "2026-09-01", "2026-09-05", status="done", owner="Programme lead",
+       group="Concept")
+d.task("hazards", "Hazard list", "2026-09-08", "2026-09-19", status="active", owner="Safety engineer",
+       group="Concept", note="second review open")
+d.task("supplier", "Supplier failure data", "2026-09-08", "2026-09-16", owner="Supplier", group="Analysis")
+d.milestone("release", "Release for operation", "2026-09-28", owner="Programme lead", group="Analysis")
+d.depends("scope", "hazards")
+d.depends("hazards", "release")
+
+d.status("supplier")      # "late": not done and its end is before today
+d.statuses()              # the effective status of every task
+```
+
+`task(id, title, start, end, *, status="pending", kind="task", owner="",
+group="", note="", effort=None)` adds a task; the dates are ISO
+`YYYY-MM-DD` strings and the end is inclusive, so a one-day task spans one
+day of the scale (`end` defaults to `start`). `status` is one of the chain's
+(`done`, `active`, `blocked`, `pending`, `late`) and colours the bar the
+same way; `kind` is `task` (a bar) or `milestone` (a solid diamond on one
+date; `milestone(id, title, date)` is the shortcut). The title is drawn in a
+bold column on the left, the owner in a small column beside it, the note in
+small grey text right of the bar; tasks with the same `group` sit under one
+band (list them together). `depends(predecessor, successor)` adds the one
+edge kind, `depends`: an elbow from the end of the predecessor's bar to the
+start of the successor's. `period(label, start, end)` names a span of the
+scale, drawn as a band of the header with a grid line at its start;
+`mark(today)` sets the today line (`mark(None)` removes it).
+
+A `late` status is derived when not given: a `pending` or `active` task
+whose end is before `today` is drawn late (amber); a `done` task never is.
+`d.status(id)` is the effective status, `d.statuses()` all of them.
+
+The layout is not a graph layout: the rows follow the order the tasks were
+added (a group row opens whenever the group changes), the bars follow their
+dates at `LayoutOptions.day_px` pixels per day (default 4; `--day-px` on the
+command line; the scale never shrinks below 240 px), and the canvas is as
+wide as the title and owner columns, the scale and the longest note need. A
+dependency whose successor starts after its predecessor ends runs forward
+through one vertical channel, placed just before the successor's bar unless
+another bar sits there; one whose successor starts earlier goes out, along
+the row boundary and back in, and is a back edge. A dependency that has to
+pass through another task's bar is a `LayoutIssue` of kind
+`edge_through_node`.
+
+DOT exports every task as a box (a milestone as a diamond) in its status
+colours with the owner and the dates under the title; Mermaid as a native
+`gantt` (one `section` per group, `done` / `active` / `crit` tags from the
+effective status, `milestone` for a milestone, the dependencies as comments
+since Mermaid draws none); the draw.io file carries the whole chart, the
+header, bands, grid, columns, notes and today line as cells under the bars,
+every bar where the layout put it. `docs/gantt_spec.json` is the bundled
+demo as a JSON spec in the kind's own form:
+
+```json
+{
+  "title": "Demo Safety Programme Plan",
+  "kind": "gantt",
+  "today": "2026-10-02",
+  "periods": [{"label": "Sprint 1", "start": "2026-09-01", "end": "2026-09-14"}],
+  "tasks": [
+    {"id": "scope", "title": "Scope definition", "start": "2026-09-01", "end": "2026-09-05",
+     "status": "done", "owner": "Programme lead", "group": "Concept"},
+    {"id": "release", "title": "Release for operation", "start": "2026-12-28", "end": "2026-12-28",
+     "kind": "milestone", "owner": "Programme lead", "group": "Verification"}
+  ],
+  "edges": [{"src": "scope", "dst": "release"}]
+}
+```
+
+`to_dict()` writes a gantt chart in this form and `from_dict()` reads it (a
+spec with `tasks` is a gantt chart). `asi-escher export gantt_spec.json
+--format png --day-px 6` renders it. What a consumer passes: one `task()`
+per deliverable with the dates its schedule gives it (asi_kletz's sprint
+scheduler: the start of the first sprint a deliverable takes points from
+and the end of the one its last point lands in), one `period()` per sprint,
+`mark()` with the date of the day, and one `depends()` per "blocks" link.
+
+![Gantt](docs/img/gantt_demo.png)
 
 ### Legibility: the OCR quality gate
 

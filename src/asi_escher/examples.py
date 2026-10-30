@@ -536,6 +536,53 @@ def chain_demo() -> Diagram:
     return d
 
 
+# ------------------------------------------------------------------ gantt --
+def gantt_demo() -> Diagram:
+    """A gantt chart of a demonstration safety programme: the same scope to
+    release story as the chain, as dated bars under four sprints with the
+    today line a day into the third.  Two tasks are done, one active, one
+    (the supplier's data) past its end and so late; the release is a
+    milestone.  Every name, owner and date is invented; the owners are
+    roles, not people."""
+    d = Diagram("Demo Safety Programme Plan", "gantt")
+    d.period("Sprint 1", "2026-09-01", "2026-09-14")
+    d.period("Sprint 2", "2026-09-15", "2026-09-28")
+    d.period("Sprint 3", "2026-09-29", "2026-10-12")
+    d.period("Sprint 4", "2026-10-13", "2026-10-26")
+    d.mark("2026-10-02")
+    d.task("scope", "Scope definition", "2026-09-01", "2026-09-05", status="done", owner="Programme lead",
+           group="Concept")
+    d.task("hazards", "Hazard list", "2026-09-08", "2026-10-09", status="active", owner="Safety engineer",
+           group="Concept", note="second review open")
+    d.task("standards", "Standards review", "2026-09-03", "2026-09-10", status="done", owner="Safety engineer",
+           group="Concept")
+    d.task("supplier", "Supplier failure data", "2026-09-15", "2026-09-26", owner="Supplier", group="Analysis",
+           note="second reminder sent")
+    d.task("metrics", "Hardware metrics", "2026-09-29", "2026-10-02", owner="Hardware engineer", group="Analysis")
+    d.task("risk", "Risk assessment", "2026-10-12", "2026-10-23", owner="Safety engineer", group="Analysis")
+    d.task("concept", "Safety concept", "2026-10-26", "2026-11-06", owner="Systems engineer", group="Design")
+    d.task("reqs", "Safety requirements", "2026-11-09", "2026-11-20", owner="Systems engineer", group="Design")
+    d.task("design", "Safety design", "2026-11-23", "2026-12-04", owner="Hardware engineer", group="Design")
+    d.task("testplan", "Verification plan", "2026-11-09", "2026-11-13", owner="Test lead", group="Verification")
+    d.task("verification", "Verification", "2026-12-07", "2026-12-18", owner="Test lead", group="Verification")
+    d.task("assessment", "Safety assessment", "2026-12-21", "2026-12-23", owner="Assessor", group="Verification")
+    d.milestone("release", "Release for operation", "2026-12-28", owner="Programme lead", group="Verification")
+    d.depends("scope", "hazards")
+    d.depends("hazards", "risk")
+    d.depends("supplier", "metrics")
+    d.depends("supplier", "risk")
+    d.depends("risk", "concept")
+    d.depends("concept", "reqs")
+    d.depends("reqs", "design")
+    d.depends("metrics", "design")
+    d.depends("concept", "testplan")
+    d.depends("design", "verification")
+    d.depends("testplan", "verification")
+    d.depends("verification", "assessment")
+    d.depends("assessment", "release")
+    return d
+
+
 EXAMPLES: list[tuple[str, Callable[[], Diagram]]] = [
     ("activity_load_cycle", activity_load_cycle),
     ("activity_swimlanes_estop", activity_swimlanes_estop),
@@ -555,4 +602,5 @@ EXAMPLES: list[tuple[str, Callable[[], Diagram]]] = [
     ("stress_random_dag", stress_random_dag),
     ("control_structure_demo", control_structure_demo),
     ("chain_demo", chain_demo),
+    ("gantt_demo", gantt_demo),
 ]

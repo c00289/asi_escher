@@ -12,7 +12,7 @@ from .pipeline import ALL_FORMATS, build
 
 # The diagram kinds the gallery runs the OCR gate on by default: the ones a
 # reader must be able to read every title of.
-OCR_KINDS = ("control_structure", "chain")
+OCR_KINDS = ("control_structure", "chain", "gantt")
 
 _CSS = """
  body{font-family:Segoe UI,Helvetica,Arial,sans-serif;margin:24px;background:#f6f7f9;color:#1f2933}

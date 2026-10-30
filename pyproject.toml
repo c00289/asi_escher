@@ -1,7 +1,7 @@
 [project]
 name = "asi_escher"
-version = "0.3.0"
-description = "Pure-Python diagram generator: activity, flowchart, state, SysML block, STPA control-structure and chain (precedence) diagrams to draw.io, PNG, SVG, DOT and Mermaid"
+version = "0.4.0"
+description = "Pure-Python diagram generator: activity, flowchart, state, SysML block, STPA control-structure, chain (precedence) and gantt diagrams to draw.io, PNG, SVG, DOT and Mermaid"
 readme = "README.md"
 authors = [
     { name = "Roy Mendoza", email = "c00289@contractor.asirobots.com" }

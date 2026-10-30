@@ -6,6 +6,57 @@ All notable changes to asi_escher are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
+The owner's ask, the same evening as the chain: "try making a gantt chart also escher regeneratable
+stored in my brain". The chain says what blocks what; this kind says when. The consumer is the same
+asi_kletz Safety Plan (its sprint scheduler gives every deliverable the sprints it takes points from),
+and the first charts of the kind are regeneratable work products in the owner's Brain.
+
+### Added
+
+- Diagram kind `gantt`, a plan on a time scale. Builder: `task(id, title, start, end, *, status, kind,
+  owner, group, note, effort)` (ISO dates, the end inclusive and defaulting to the start; `status` the
+  chain's five, colouring the bar; `kind` in `task | milestone`), `milestone(id, title, date)`,
+  `depends(predecessor, successor)` (the one edge kind, `depends`), `period(label, start, end)` (a
+  sprint or a quarter: a band of the header with a grid line at its start) and `mark(today)` (the
+  today line). `late` is derived when not given: a pending or active task whose end is before
+  `today`. `Period`, `GANTT_NODE_KINDS` and `GANTT_EDGE_KINDS` are exported.
+- The layout of the kind (`gantt.py`, dispatched from `layout()`): one row per task in author order, a
+  group row wherever the group changes, bars by date at `LayoutOptions.day_px` pixels per day
+  (default 4, the scale never narrower than 240 px), the title and owner columns, the periods and the
+  months as a two-band header, the notes right of the bars, the today line; a forward dependency as
+  an elbow through one vertical channel placed clear of the bars between its rows where it can be, a
+  backward one out along the row boundary and back in (a back edge); a dependency through another
+  task's bar is a `LayoutIssue` of kind `edge_through_node`. `d.gantt` holds the chart's chrome for
+  the renderer and the exporters.
+- Rendering: the group bands, the alternating row stripes, the header, the grid at the period starts
+  and dotted month ticks, the bars in the status colours (a milestone a solid diamond in the status's
+  stroke), the dependencies with arrowheads, the today line in red with its label. Theme keys `task`,
+  `gantt_header`, `gantt_group`, `gantt_grid`, `today`.
+- Exports for the kind: DOT (a box per task, a diamond per milestone, status colours, the owner and
+  the dates under the title), Mermaid (a native `gantt`: one `section` per group, `done` / `active` /
+  `crit` tags from the effective status, `milestone`, the dependencies as comments since Mermaid draws
+  none), draw.io (the whole chart: header, bands, grid, columns, notes and today line as cells under
+  the bars, every bar and dependency where the layout put them; a task keeps its own cell id, the
+  chrome yields).
+- The gantt spec form: `to_dict()` writes `today`, `periods`, `tasks` and `edges` as plain lists and
+  `from_dict()` reads a spec with `tasks` as a gantt chart; `docs/gantt_spec.json`. `--day-px` on
+  `export`, `build`, `example` and `gallery`.
+- Bundled example `gantt_demo` (synthetic: the chain demo's programme as dated bars under four
+  sprints, two tasks done, one active, one late, a milestone, thirteen dependencies; the owners are
+  roles, no person) and the README picture `docs/img/gantt_demo.png`; the gallery builds it and runs
+  the OCR gate on it (`gallery.OCR_KINDS`).
+- Tests: `test_gantt.py`.
+
+### Changed
+
+- `Diagram(title, kind)` defaults `direction` to `LR` for a gantt chart as for a chain.
+- A chain's `milestone` and a gantt chart's share the kind name; the renderer and the exporters tell
+  them apart by the start date (`gantt.is_task`). Every other diagram kind lays out and exports as
+  before.
+- `Node` has `start`, `end` and `group`; `Diagram` has `periods`, `today` and `gantt`.
+
 ## [0.3.0] - 2026-10-29
 
 The owner's ask: "a new project for escher that will eventually be used elsewhere; for now just an

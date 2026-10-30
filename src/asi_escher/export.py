@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
+from .gantt import dot_label, drawio_chrome, is_task, mermaid_gantt
 from .metrics import DASHED_EDGE_KINDS, SMALL_PX, chain_sublines, control_sections, edge_label, text_box
 from .model import CHAIN_NODE_KINDS, CONTROL_NODE_KINDS, Diagram, Edge, Node
 from .provenance import drawio_comment, drawio_note, slug
@@ -27,8 +28,11 @@ def _html(s: str) -> str:
 
 
 def _chain_facts(d: Diagram) -> tuple[dict, set]:
-    """The effective statuses and the critical-path edges of a chain (empty
-    for any other kind), computed once per export."""
+    """The effective statuses and the critical-path edges of a chain, the
+    effective statuses alone of a gantt chart (empty for any other kind),
+    computed once per export."""
+    if d.kind == "gantt":
+        return d.statuses(), set()
     if d.kind != "chain" and not any(n.kind in CHAIN_NODE_KINDS for n in d.nodes.values()):
         return {}, set()
     return d.statuses(), d.critical_edges()
@@ -79,10 +83,13 @@ def _dot_node(n: Node, status: str = "pending") -> str:
     fill, stroke = THEME.get(k, ("#F4F4F4", "#5F6B7A"))
     fill = n.fill or fill
     stroke = n.stroke or stroke
-    if k in CHAIN_NODE_KINDS:
+    if k in CHAIN_NODE_KINDS or is_task(n):
         fill, stroke = _status_colours(n, status)
     base = f'fillcolor={_q(fill)}, color={_q(stroke)}'
-    if k == "start":
+    if is_task(n):                      # before the chain kinds: both have a "milestone"
+        shape, style = ("diamond", "filled") if k == "milestone" else ("box", "rounded,filled")
+        attrs = f'shape={shape}, style="{style}", label=<{dot_label(n)}>, {base}'
+    elif k == "start":
         attrs = 'shape=circle, label="", width=0.22, height=0.22, fixedsize=true, fillcolor="#1F2933", color="#1F2933"'
     elif k == "end":
         attrs = ('shape=doublecircle, label="", width=0.2, height=0.2, fixedsize=true, '
@@ -199,6 +206,8 @@ def to_mermaid(d: Diagram) -> str:
         return _mermaid_class(d)
     if d.kind == "chain":
         return _mermaid_chain(d)
+    if d.kind == "gantt":
+        return mermaid_gantt(d, _mid, d.statuses())
     return _mermaid_flow(d)
 
 
@@ -446,9 +455,13 @@ def to_drawio(d: Diagram, provenance: bool = True, name: str | None = None) -> s
                              vertex="1", parent="1")
         _geometry(cell, x, y, w, h)
     statuses, critical = _chain_facts(d)
-    node_ids = {}
+    node_ids = {n.id: ids.take(n.id) for n in d.real_nodes()}     # a node keeps its own id, chrome yields
+    if d.kind == "gantt":
+        # the chart's chrome under the bars: header, bands, stripes, grid, columns, notes, today line
+        for cid, value, style, (x, y, w, h) in drawio_chrome(d, THEME):
+            cell = ET.SubElement(root, "mxCell", id=ids.take(cid), value=value, style=style, vertex="1", parent="1")
+            _geometry(cell, x, y, w, h)
     for n in d.real_nodes():
-        node_ids[n.id] = ids.take(n.id)
         cell = ET.SubElement(root, "mxCell", id=node_ids[n.id], value=_drawio_label(n),
                              style=_drawio_node_style(n, statuses.get(n.id, "pending")), vertex="1", parent="1")
         _geometry(cell, n.left, n.top, n.w, n.h)
@@ -523,8 +536,8 @@ def _xhtml(s: str) -> str:
 
 def _drawio_label(n: Node) -> str:
     k = n.kind
-    if k in ("start", "end", "fork", "join", "merge"):
-        return ""
+    if k in ("start", "end", "fork", "join", "merge") or is_task(n):
+        return ""                                   # a task's title is a cell of the chrome, in its column
     if k == "flowfinal":
         return "X"
     if k in ("block", "requirement", "part", "object"):
@@ -567,10 +580,14 @@ def _drawio_node_style(n: Node, status: str = "pending") -> str:
     fill, stroke = THEME.get(k, ("#F4F4F4", "#5F6B7A"))
     fill = n.fill or fill
     stroke = n.stroke or stroke
-    if k in CHAIN_NODE_KINDS:
+    if k in CHAIN_NODE_KINDS or is_task(n):
         fill, stroke = _status_colours(n, status)
     colours = f"fillColor={fill};strokeColor={stroke};"
     text = "whiteSpace=wrap;html=1;"
+    if is_task(n):                                  # before the chain kinds: both have a "milestone"
+        if k == "milestone":
+            return f"rhombus;fillColor={stroke};strokeColor={stroke};"
+        return f"rounded=1;arcSize=40;{colours}strokeWidth=1.2;"
     if k == "start":
         return f"ellipse;fillColor={THEME['bar']};strokeColor={THEME['bar']};"
     if k == "end":
