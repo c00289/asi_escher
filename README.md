@@ -6,7 +6,7 @@ Pure-Python diagram generator for engineering documentation. Describe a
 diagram in a few lines of Python (or a JSON file), and asi_escher lays it out,
 writes it as an editable **draw.io** file and renders it to **PNG** and
 **SVG**, plus **Graphviz DOT** and **Mermaid** source, with no draw.io,
-Graphviz, Node or browser needed. Version **0.2.1**, alpha.
+Graphviz, Node or browser needed. Version **0.2.2**, alpha.
 
 Supported diagram families:
 
@@ -69,7 +69,7 @@ asi-escher = { path = "../asi_escher", editable = true }
 ```
 
 A pinned git source works the same way:
-`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.2.1" }`.
+`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.2.2" }`.
 
 This folder lives in OneDrive, which rejects the hardlinks uv normally makes
 from its cache; `pyproject.toml` therefore sets `tool.uv.link-mode = "copy"`
@@ -133,7 +133,7 @@ asi_escher's renderings of that same layout, not draw.io exports.
 
 Every output says so: the `.drawio` carries an XML comment after the
 `<mxfile>` opening and a small grey note under the drawing, and the PNG and
-SVG a grey footer line in the bottom-left corner ("asi_escher 0.2.1,
+SVG a grey footer line in the bottom-left corner ("asi_escher 0.2.2,
 2026-10-29; layout shared with `<slug>.drawio`"). `provenance=False` on
 `build()`, `render()` or `to_drawio()` (`--no-provenance` on the command
 line) switches the marks off; `name=` sets the stem they name.
@@ -205,10 +205,10 @@ ocr=True)` (`--ocr` on the command line) adds the report under `"ocr"` (an
 `LayoutIssue` of kind `ocr` per unreadable label; `ocr_check(png_path,
 expected)` runs it on any picture and `asi-escher verify <png> --expect
 LABEL...` from the shell (exit 0 competent, 1 unreadable labels, 3 engine
-unavailable). The match is tolerant: case, punctuation and accents ignored,
-words found in order on one OCR line or across adjacent ones, hyphenation
-and the engine's usual confusions (`O`/`0`, `I`/`l`/`1`, `rn`/`tn` for an
-italic `m`) folded. The PowerShell side writes UTF-8 and the Python side
+unavailable; `--json` prints the report as JSON). The match is tolerant:
+case, punctuation and accents ignored, words found in order on one OCR line
+or across adjacent ones, hyphenation and the engine's usual confusions
+(`O`/`0`, `I`/`l`/`1`, `rn`/`tn` for an italic `m`) folded. The PowerShell side writes UTF-8 and the Python side
 reads UTF-8, so a label with a bullet, a dash or an accent (`•`, `–`, `é`)
 comes back intact instead of as a control byte of the console code page,
 which used to break the JSON report and make the gate say `unavailable`.
@@ -239,9 +239,10 @@ asi-escher list                                 # names of bundled examples
 share the options `-o/--out DIR` (default `out`), `--dpi N` (PNG resolution,
 default 160), `--formats drawio,png,svg,dot,mmd` (any subset, default all),
 `--ranksep PX` and `--nodesep PX` (layout spacing), `--no-provenance` and
-`--ocr`. `build` also takes `--name STEM` for a single spec and reads one
-spec from stdin when the file argument is `-`. `asi-escher --version` prints
-the installed version.
+`--ocr`. `build` also takes `--name STEM` for a single spec; `build` and
+`export` read one spec from stdin when the file argument is `-`.
+`asi-escher verify PNG --expect LABEL... [--json]` is the OCR gate on its
+own. `asi-escher --version` prints the installed version.
 
 Run `asi-escher gallery` and open `out/index.html` to see every diagram
 family rendered, with its DOT and Mermaid source alongside. Layout issues
@@ -399,6 +400,10 @@ uv run asi-escher gallery    # regenerate out/ for a visual check
 uv build                     # wheel + sdist in dist/
 ```
 
+The README pictures in `docs/img` are `asi-escher example NAME --formats png
+--no-provenance --dpi 100` (110 for the control structure), so they stay
+byte-identical across releases while the layout stands still.
+
 The suite lives in `tests/`: `test_model.py` (validation and JSON round
 trips), `test_layout.py` (geometric invariants), `test_issues.py` (layout
 issue reporting), `test_export.py` (DOT and Mermaid), `test_drawio.py` (the
@@ -406,14 +411,14 @@ draw.io file parsed back, positions equal to the layout, provenance marks),
 `test_control_structure.py` (the kind: builder, layout rules, renderer,
 exports), `test_ocr.py` (the matcher, the unavailable path, the CLI and the
 demo's legibility under the real engine), `test_render_pipeline.py`
-(renderer isolation, `build()`, formats and the CLI) and
+(renderer isolation, `build()`, formats and the CLI), `test_version.py`
+(the version agrees across pyproject, README, CHANGELOG and the package) and
 `test_private_smoke.py` (skipped unless a private sibling dataset is beside
 the repo; asserts counts, the tier shape and the OCR verdict only);
-`conftest.py` provides every bundled example
-as a fixture. The geometry tests assert, for every bundled example, that
-nodes never overlap, edges are orthogonal, edges never pass through
-unrelated nodes, all geometry and labels fit the canvas, layout is repeatable
-and no layout issues are reported.
+`conftest.py` provides every bundled example as a fixture. The geometry
+tests assert, for every bundled example, that nodes never overlap, edges are
+orthogonal, edges never pass through unrelated nodes, all geometry and labels
+fit the canvas, layout is repeatable and no layout issues are reported.
 
 ## Limitations
 

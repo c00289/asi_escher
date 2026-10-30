@@ -6,6 +6,34 @@ All notable changes to asi_escher are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-29
+
+Broken-windows sweep at the end of the day that shipped 0.1.2 to 0.2.1: nothing new, everything
+tidied. The Python API, the formats and every output are unchanged.
+
+### Changed
+
+- `__version__` comes from `asi_escher.provenance.package_version()`, the one lookup, instead of a
+  second copy of the same try / except in `__init__`.
+- `provenance.today()` says in its docstring that the date in the marks is the local calendar date on
+  purpose: the file says when it was drawn on the machine that drew it.
+- The renderer's private helpers `_draw_node`, `_draw_edge` and `_draw_block` no longer take the
+  parameters they never read.
+- The docstring of the lateral-arrow rule illustrates it with a generic pair of operators, not with the
+  owner's structure.
+- `docs/img/control_structure_demo.png` regenerated without the provenance footer, like the other three
+  README pictures (dpi 110, the layout of 0.2.1 unchanged), so a version bump no longer dates it; the
+  README says how the pictures are made.
+- README: `verify` documents `--json`, `export` reads a spec from stdin like `build`, the test list
+  names `test_version.py`.
+
+### Fixed
+
+- Tests: the session-wide OCR probe wrote a PNG with `NamedTemporaryFile(delete=False)` and never
+  removed it (one file per run in `%TEMP%`); it now lives in pytest's `tmp_path_factory` directory.
+  The private smoke test's comments no longer describe the private structure's tiers, and it no longer
+  asks for a fixture it did not use.
+
 ## [0.2.1] - 2026-10-29
 
 The owner, looking at the rendering of his own control structure (two operators stacked one above the
@@ -236,7 +264,8 @@ unversioned `pydraw` prototype.
 - Demo catalog moved into the package as `examples`; `demos/build_all.py`
   is a thin wrapper around `gallery`.
 
-[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/c00289/asi_escher/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/c00289/asi_escher/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/c00289/asi_escher/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/c00289/asi_escher/compare/v0.1.2...v0.1.3

@@ -15,13 +15,16 @@ from importlib.metadata import PackageNotFoundError, version
 
 
 def package_version() -> str:
+    """The installed version, ``0.0.0`` from a source tree that was never installed."""
     try:
         return version("asi_escher")
-    except PackageNotFoundError:  # running from a source tree without installation
+    except PackageNotFoundError:
         return "0.0.0"
 
 
 def today() -> str:
+    """The local calendar date, ISO formatted: the mark says when the file was drawn on the
+    machine that drew it, which is what the person opening it beside its siblings expects."""
     return _dt.date.today().isoformat()
 
 

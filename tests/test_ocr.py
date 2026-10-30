@@ -1,5 +1,4 @@
 """The OCR quality gate: the matcher, the unavailable path, build() and the CLI, and the demo's legibility."""
-import io
 import json
 import subprocess
 
@@ -101,18 +100,13 @@ def test_cli_build_with_ocr_prints_the_verdict(monkeypatch, tmp_path, capsys):
 
 
 @pytest.fixture(scope="session")
-def ocr_engine():
+def ocr_engine(tmp_path_factory):
     """True when the Windows OCR engine runs here; otherwise the dependent tests skip."""
-    buf = io.BytesIO()
     d = Diagram("Probe")
     d.action("a", "Probe")
-    render(layout(d), png=buf)
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        f.write(buf.getvalue())
-        path = f.name
-    return recognize(path).available
+    path = tmp_path_factory.mktemp("ocr") / "probe.png"
+    render(layout(d), png=str(path))
+    return recognize(str(path)).available
 
 
 def test_demo_is_competent_under_real_ocr(ocr_engine, tmp_path):

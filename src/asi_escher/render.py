@@ -111,9 +111,9 @@ def render(d: Diagram, png: str | None = None, svg: str | None = None,
         _draw_lanes(ax, d, th)
         _draw_frame(ax, d, th)
         for e in d.edges:
-            _draw_edge(ax, d, e, th)
+            _draw_edge(ax, e, th)
         for n in d.nodes.values():
-            _draw_node(ax, n, th, d)
+            _draw_node(ax, n, th)
         for e in d.edges:
             _draw_edge_label(ax, e, th)
         if provenance:
@@ -174,7 +174,7 @@ def _draw_frame(ax, d, th):
 
 
 # -------------------------------------------------------------- nodes -----
-def _draw_node(ax, n: Node, th, d: Diagram):
+def _draw_node(ax, n: Node, th):
     k = n.kind
     if k == "dummy":
         return
@@ -232,7 +232,7 @@ def _draw_node(ax, n: Node, th, d: Diagram):
         ax.add_patch(Ellipse((x, y - h / 2 + ry), w, 2 * ry, fc=fill, ec=stroke, lw=1.4, zorder=z + 2))
         _text(ax, x, y + 3, n.text)
     elif k in ("block", "requirement", "part", "object"):
-        _draw_block(ax, n, fill, stroke, th)
+        _draw_block(ax, n, fill, stroke)
     elif k in CONTROL_NODE_KINDS:
         _draw_control_box(ax, n, fill, stroke, th)
     else:  # action, process, state
@@ -246,7 +246,7 @@ def _draw_node(ax, n: Node, th, d: Diagram):
         _text(ax, x, y, n.text)
 
 
-def _draw_block(ax, n: Node, fill, stroke, th):
+def _draw_block(ax, n: Node, fill, stroke):
     x, y, w, h = n.x, n.y, n.w, n.h
     left, top = x - w / 2, y - h / 2
     ax.add_patch(Rectangle((left, top), w, h, fc="white", ec=stroke, lw=1.4, zorder=4))
@@ -329,7 +329,7 @@ def _draw_control_box(ax, n: Node, fill, stroke, th):
 
 
 # -------------------------------------------------------------- edges -----
-def _draw_edge(ax, d: Diagram, e: Edge, th):
+def _draw_edge(ax, e: Edge, th):
     if not e.points:
         return
     pts = list(e.points)

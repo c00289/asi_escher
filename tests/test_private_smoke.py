@@ -47,7 +47,7 @@ def _private_structure() -> Diagram:
     return d
 
 
-def test_private_structure_builds_renders_and_exports(tmp_path):
+def test_private_structure_builds_renders_and_exports():
     d = _private_structure()
     boxes = [n for n in d.real_nodes() if n.kind != "note"]
     assert len(boxes) == 8
@@ -63,9 +63,9 @@ def test_private_structure_builds_renders_and_exports(tmp_path):
     tiers = {}
     for n in boxes:
         tiers[n.layer] = tiers.get(n.layer, 0) + 1
-    assert sorted(tiers) == [0, 1, 2, 3]                                 # four tiers:
-    assert [tiers[k] for k in sorted(tiers)] == [3, 2, 1, 2]             # the peers and the data source; the
-    assert d.width >= 0.75 * d.height                                    # supervisor and the stop path; the
+    assert sorted(tiers) == [0, 1, 2, 3]                                 # four tiers since 0.2.1 ...
+    assert [tiers[k] for k in sorted(tiers)] == [3, 2, 1, 2]             # ... of this shape, top to bottom
+    assert d.width >= 0.75 * d.height                                    # wider than tall, not a tower
     png, svg = io.BytesIO(), io.BytesIO()
     render(d, png=png, svg=svg)
     assert png.getvalue()[:8] == b"\x89PNG\r\n\x1a\n" and b"<svg" in svg.getvalue()

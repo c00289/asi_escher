@@ -229,10 +229,10 @@ def _lateral_edges(d: Diagram) -> set[int]:
     sender's every other control action reaches past the receiver's own
     subordinates into the receiver's domain (the boxes the receiver controls
     through others): the sender is then not above the receiver but beside
-    it, working the same boxes from another side.  A field operator who asks
-    the control-room operator for a stop and otherwise commands the vehicle
-    controller and the machine, both of them under the control-room
-    operator's supervisor, is such a peer.  A sender with no other control
+    it, working the same boxes from another side.  An operator who asks a
+    second operator for a stop and otherwise commands the automation and the
+    machine, both of them two or more steps below that second operator, is
+    such a peer.  A sender with no other control
     action, or one that commands a direct subordinate of the receiver (an
     operator who commands the automation and, past it, the process the
     automation commands), is a plain superior.
