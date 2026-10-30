@@ -7,7 +7,7 @@ import pytest
 from asi_escher import Diagram, OcrReport, build, layout, ocr_check, render
 from asi_escher.cli import main
 from asi_escher.examples import control_structure_demo
-from asi_escher.ocr import _SCRIPT, _find, _token_stream, _tokens, recognize
+from asi_escher.ocr import _SCRIPT, _find, _token_stream, _tokens
 
 
 def _found(label, lines):
@@ -97,16 +97,6 @@ def test_cli_build_with_ocr_prints_the_verdict(monkeypatch, tmp_path, capsys):
     assert main(["example", "control_structure_demo", "-o", str(tmp_path), "--formats", "png", "--ocr"]) == 0
     out, err = capsys.readouterr()
     assert "legibility: unreadable:" in out and "not readable in the PNG" in err
-
-
-@pytest.fixture(scope="session")
-def ocr_engine(tmp_path_factory):
-    """True when the Windows OCR engine runs here; otherwise the dependent tests skip."""
-    d = Diagram("Probe")
-    d.action("a", "Probe")
-    path = tmp_path_factory.mktemp("ocr") / "probe.png"
-    render(layout(d), png=str(path))
-    return recognize(str(path)).available
 
 
 def test_demo_is_competent_under_real_ocr(ocr_engine, tmp_path):

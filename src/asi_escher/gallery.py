@@ -10,6 +10,10 @@ from .examples import EXAMPLES
 from .model import Diagram
 from .pipeline import ALL_FORMATS, build
 
+# The diagram kinds the gallery runs the OCR gate on by default: the ones a
+# reader must be able to read every title of.
+OCR_KINDS = ("control_structure", "chain")
+
 _CSS = """
  body{font-family:Segoe UI,Helvetica,Arial,sans-serif;margin:24px;background:#f6f7f9;color:#1f2933}
  h1{font-size:22px} h2{font-size:17px;margin:40px 0 8px}
@@ -27,12 +31,13 @@ def build_gallery(out_dir: str,
                   examples: Iterable[tuple[str, Callable[[], Diagram]]] = EXAMPLES,
                   dpi: int = 160, log: Callable[[str], None] | None = print,
                   formats: tuple[str, ...] = ALL_FORMATS, provenance: bool = True,
-                  ocr: bool | str = "control_structure") -> list[dict]:
+                  ocr: bool | str | tuple[str, ...] = OCR_KINDS) -> list[dict]:
     """Render ``examples`` into ``out_dir`` and write ``index.html``.
 
     ``ocr`` runs the OCR quality gate (:mod:`asi_escher.ocr`) on the written
-    PNGs: ``True`` for every diagram, ``False`` for none, or a diagram kind
-    (the default, ``"control_structure"``) for the diagrams of that kind.
+    PNGs: ``True`` for every diagram, ``False`` for none, a diagram kind or a
+    tuple of kinds (the default, :data:`OCR_KINDS`) for the diagrams of those
+    kinds.
 
     Returns one result dict per diagram (see :func:`asi_escher.build`) with
     the extra keys ``name``, ``title``, ``kind``, ``direction`` and ``seconds``.
@@ -43,7 +48,7 @@ def build_gallery(out_dir: str,
     for name, builder in examples:
         t = time.time()
         d = builder()
-        gate = ocr is True or (isinstance(ocr, str) and ocr == d.kind)
+        gate = ocr is True or (isinstance(ocr, str) and ocr == d.kind) or (isinstance(ocr, tuple) and d.kind in ocr)
         res = build(d, out_dir, name, dpi=dpi, formats=formats, provenance=provenance,
                     ocr=gate and "png" in formats)
         res.update(name=name, title=d.title, kind=d.kind, direction=d.direction,

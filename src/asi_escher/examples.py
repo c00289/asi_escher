@@ -495,6 +495,47 @@ def control_structure_demo() -> Diagram:
     return d
 
 
+# ------------------------------------------------------------------ chain --
+def chain_demo() -> Diagram:
+    """A chain of a demonstration safety programme: scope to release along
+    one spine, a supplier's data and a verification plan on branches, a
+    gate before the milestone.  Every name, owner and date is invented;
+    the owners are roles, not people."""
+    d = Diagram("Demo Safety Programme Chain", "chain")
+    d.event("scope", "Scope definition", status="done", owner="Programme lead", due="2026-09-04")
+    d.event("standards", "Standards review", status="done", owner="Safety engineer", due="2026-09-11")
+    d.event("supplier", "Supplier failure data", kind="external", status="late", owner="Supplier",
+            due="2026-10-16", note="second reminder sent")
+    d.event("hazards", "Hazard list", status="active", owner="Safety engineer", due="2026-11-06")
+    d.event("risk", "Risk assessment", owner="Safety engineer", due="2026-11-20")
+    d.event("metrics", "Hardware metrics", owner="Hardware engineer", due="2026-11-27")
+    d.event("concept", "Safety concept", owner="Systems engineer", due="2026-12-11")
+    d.event("reqs", "Safety requirements", owner="Systems engineer", due="2027-01-08")
+    d.event("design", "Safety design", owner="Hardware engineer", due="2027-02-05")
+    d.event("testplan", "Verification plan", owner="Test lead", due="2027-01-22")
+    d.event("verification", "Verification", owner="Test lead", due="2027-03-05")
+    d.event("validation", "Validation", owner="Test lead", due="2027-03-26")
+    d.event("assessment", "Safety assessment", kind="gate", owner="Assessor", due="2027-04-09")
+    d.event("release", "Release for operation", kind="milestone", owner="Programme lead", due="2027-04-23")
+    d.blocks("scope", "hazards")
+    d.blocks("hazards", "risk")
+    d.blocks("supplier", "risk")
+    d.blocks("supplier", "metrics", label="failure rates")
+    d.blocks("risk", "concept")
+    d.blocks("concept", "reqs")
+    d.blocks("standards", "reqs", kind="enables")
+    d.blocks("reqs", "design")
+    d.blocks("metrics", "design")
+    d.blocks("reqs", "testplan")
+    d.blocks("risk", "testplan", kind="informs")
+    d.blocks("design", "verification")
+    d.blocks("testplan", "verification", kind="enables")
+    d.blocks("verification", "validation")
+    d.blocks("validation", "assessment")
+    d.blocks("assessment", "release")
+    return d
+
+
 EXAMPLES: list[tuple[str, Callable[[], Diagram]]] = [
     ("activity_load_cycle", activity_load_cycle),
     ("activity_swimlanes_estop", activity_swimlanes_estop),
@@ -513,4 +554,5 @@ EXAMPLES: list[tuple[str, Callable[[], Diagram]]] = [
     ("req_safety_requirements", req_safety_requirements),
     ("stress_random_dag", stress_random_dag),
     ("control_structure_demo", control_structure_demo),
+    ("chain_demo", chain_demo),
 ]

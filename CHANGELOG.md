@@ -6,6 +6,64 @@ All notable changes to asi_escher are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+
+The owner's ask: "a new project for escher that will eventually be used elsewhere; for now just an
+escher demo: a diagram that shows how all the events are chained, basically showing what is a blocker
+for what, and this framework can tie in predecessors and successors." The later consumer is asi_kletz
+(its Safety Plan deliverables and the Jira "blocks" links), so the model is plain data a plan can feed.
+
+### Added
+
+- Diagram kind `chain`, a precedence network. Builder: `event(id, title, *, status, kind, owner, due,
+  note, effort)` with `status` in `done | active | blocked | pending | late` (the box colour: done
+  green-grey, active blue, blocked `#F4C2C2`, pending white, late amber) and `kind` in `event |
+  milestone | gate | external` (the shape: rounded, pointed ends, double border, dashed), the owner and
+  due date as small lines under the title, the note as a small italic one; `blocks(predecessor,
+  successor, *, kind, label)` with `kind` in `blocks | enables | informs` (solid with an arrowhead,
+  solid thin, dashed with an open arrowhead). `blocked` is derived when not given: a pending event whose
+  direct predecessor on a `blocks` edge is late, or marked blocked, is blocked (a pending or active
+  predecessor is the normal course of a plan; the literal "any predecessor not done" rule paints every
+  future event of a plan pink and says nothing).
+- The queries: `predecessors`, `successors` (direct), `upstream`, `downstream` (transitive, in
+  dependency order), `blockers` (the not-done events on the `blocks` chains above an event, up to the
+  first done one, nearest first), `critical_path` (the longest chain by count, or by `effort` where
+  given), `critical_edges`, `cycles` and `back_edges` (every cycle as its ids; a cycle is a
+  `LayoutIssue` of kind `cycle`, the layout completes by drawing the closing edge backwards),
+  `status` / `statuses` (effective), `columns`.
+- Layout rules of the kind: left to right, an event's column one past the deepest of its `blocks` /
+  `enables` predecessors, events with no predecessor in column 0, `informs` edges rank nothing (a
+  backward one goes through the channel), the critical path pinned on one straight row with its
+  arrows thicker and leaving on the centre line, the other rows relaxing around it, a long edge
+  following its source and jogging once near its target; `LayoutOptions.for_kind("chain")`.
+- Rendering: status colours and kind shapes, the critical path's arrows thicker, `render(d,
+  focus=<id>)` (`build(..., focus=)`, `asi-escher export --focus ID`) dims everything but the event,
+  its blockers and the `blocks` edges between them.
+- Exports for the kind: DOT (status colours, hexagon / double border / dashed box, thicker critical
+  edges, `informs` dashed without rank), Mermaid (`flowchart LR`, one `classDef` per status and every
+  event in the class of its effective status), draw.io (the same shapes, colours and widths).
+- The chain spec form: `to_dict()` writes a chain as `events` and `edges` plain lists (`id`, `title`,
+  `kind`, `status`, `owner`, `due`, `note`, `effort`; `src`, `dst`, `kind`, `label`) and `from_dict()`
+  reads a spec with `events` as a chain; `docs/chain_spec.json`. `asi-escher chain SPEC [--blockers
+  ID...]` prints the critical path, the cycles, the effective statuses and the blockers as JSON.
+- Bundled example `chain_demo` (synthetic: a safety programme from scope definition to release for
+  operation along one spine, a supplier's failure data and a verification plan on branches, a gate
+  before the milestone; fourteen events, two done, one active, two blocked, one late, one external,
+  one `informs` edge, one labelled edge; the owners are roles, no person) and the README picture
+  `docs/img/chain_demo.png`; the gallery builds it and runs the OCR gate on it (`gallery.OCR_KINDS`).
+- Tests: `test_chain.py`; the session OCR probe moved to `conftest.py` so both kinds share it.
+
+### Changed
+
+- `Diagram(title, kind)` defaults `direction` to `LR` for a chain and `TB` for every other kind (the
+  parameter default is now `None`; passing `"TB"` or `"LR"` works as before). `from_dict` passes the
+  spec's `direction` through unchanged, so a spec without one gets the kind's default.
+- `metrics.DASHED_EDGE_KINDS` includes `informs`; the renderer's `_draw_edge` takes `thick` and
+  `alpha`, `_draw_node` a `status` and `alpha`, all defaulted so an undimmed drawing is the same bytes.
+- `build_gallery(ocr=)` accepts a tuple of kinds; the default is `("control_structure", "chain")`.
+- Every other diagram kind lays out and exports as before, byte for byte (checked against 0.2.2 for all
+  seventeen examples: layout, draw.io, DOT, Mermaid and the SVG drawing).
+
 ## [0.2.2] - 2026-10-29
 
 Broken-windows sweep at the end of the day that shipped 0.1.2 to 0.2.1: nothing new, everything
@@ -264,7 +322,8 @@ unversioned `pydraw` prototype.
 - Demo catalog moved into the package as `examples`; `demos/build_all.py`
   is a thin wrapper around `gallery`.
 
-[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/c00289/asi_escher/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/c00289/asi_escher/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/c00289/asi_escher/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/c00289/asi_escher/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/c00289/asi_escher/compare/v0.1.3...v0.2.0

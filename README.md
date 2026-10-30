@@ -6,7 +6,7 @@ Pure-Python diagram generator for engineering documentation. Describe a
 diagram in a few lines of Python (or a JSON file), and asi_escher lays it out,
 writes it as an editable **draw.io** file and renders it to **PNG** and
 **SVG**, plus **Graphviz DOT** and **Mermaid** source, with no draw.io,
-Graphviz, Node or browser needed. Version **0.2.2**, alpha.
+Graphviz, Node or browser needed. Version **0.3.0**, alpha.
 
 Supported diagram families:
 
@@ -17,6 +17,7 @@ Supported diagram families:
 | State machine | state, start, end | modes and transitions |
 | SysML BDD / IBD / REQ | block, part, requirement + composition, aggregation, generalization, connector, itemflow, satisfy, derive, verify, refine, allocate | structure, interfaces, traceability |
 | STPA control structure | controller, human_controller, controlled_process, environment, sensor, actuator, external_system, note + control_action, feedback | hazard analysis: who controls what, through which signals |
+| Chain | event, milestone, gate, external + blocks, enables, informs | a plan's precedence network: what is a blocker for what, the critical path |
 
 ![Swimlane activity diagram](docs/img/activity_swimlanes_estop.png)
 
@@ -69,7 +70,7 @@ asi-escher = { path = "../asi_escher", editable = true }
 ```
 
 A pinned git source works the same way:
-`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.2.2" }`.
+`asi-escher = { git = "https://github.com/c00289/asi_escher", tag = "v0.3.0" }`.
 
 This folder lives in OneDrive, which rejects the hardlinks uv normally makes
 from its cache; `pyproject.toml` therefore sets `tool.uv.link-mode = "copy"`
@@ -133,7 +134,7 @@ asi_escher's renderings of that same layout, not draw.io exports.
 
 Every output says so: the `.drawio` carries an XML comment after the
 `<mxfile>` opening and a small grey note under the drawing, and the PNG and
-SVG a grey footer line in the bottom-left corner ("asi_escher 0.2.2,
+SVG a grey footer line in the bottom-left corner ("asi_escher 0.3.0,
 2026-10-29; layout shared with `<slug>.drawio`"). `provenance=False` on
 `build()`, `render()` or `to_drawio()` (`--no-provenance` on the command
 line) switches the marks off; `name=` sets the stem they name.
@@ -193,13 +194,124 @@ wider so the arrows on its edge keep apart.
 
 ![STPA control structure](docs/img/control_structure_demo.png)
 
+### Chains
+
+The `chain` kind draws a precedence network: the events of a plan and what
+is a blocker for what, so a reader sees how everything is chained, which
+events are stuck and why, and the longest run from start to finish. The
+model is plain data a plan can feed (asi_kletz's Safety Plan deliverables
+and the Jira "blocks" links are the intended source), and every question a
+plan asks of it has a method.
+
+```python
+d = Diagram("Demo Safety Programme Chain", "chain")
+d.event("scope", "Scope definition", status="done", owner="Programme lead", due="2026-09-04")
+d.event("supplier", "Supplier failure data", kind="external", status="late", owner="Supplier",
+        due="2026-10-16", note="second reminder sent")
+d.event("hazards", "Hazard list", status="active", owner="Safety engineer", due="2026-11-06")
+d.event("risk", "Risk assessment", owner="Safety engineer", due="2026-11-20")
+d.event("release", "Release for operation", kind="milestone", effort=1)
+d.blocks("scope", "hazards")
+d.blocks("hazards", "risk")
+d.blocks("supplier", "risk", label="failure rates")
+d.blocks("risk", "release")
+d.blocks("hazards", "release", kind="informs")
+
+d.status("risk")          # "blocked": a predecessor that blocks it is late
+d.blockers("release")     # ["risk", "supplier", "hazards"]: not done, nearest first
+d.critical_path()         # ["scope", "hazards", "risk", "release"]
+d.predecessors("risk"), d.successors("risk"), d.upstream("release"), d.downstream("scope")
+d.cycles()                # [] for a well-formed chain
+```
+
+`event(id, title, *, status="pending", kind="event", owner="", due="",
+note="", effort=None)` adds an event. `status` is one of `done`, `active`,
+`blocked`, `pending`, `late` and sets the box colour: done green-grey, active
+blue, blocked pinkish red (`#F4C2C2`), pending white, late amber. `kind` is
+one of `event` (a rounded box), `milestone` (a box with pointed ends), `gate`
+(a double border), `external` (a dashed border: something somebody else
+delivers). The owner and the due date are drawn as small lines under the
+title, the note as a small italic line. `blocks(predecessor, successor, *,
+kind="blocks", label="")` adds an edge: `blocks` (solid, an arrowhead; the
+Jira "blocks" link), `enables` (solid, thin), `informs` (dashed, an open
+arrowhead; it orders nothing). A label is drawn on the edge when given.
+
+A `blocked` status is derived when not given: a `pending` event whose direct
+predecessor on a `blocks` edge is `late`, or marked `blocked`, is drawn
+blocked. A pending or active predecessor is the normal course of a plan and
+colours nothing; the pink boxes are the ones directly waiting on trouble.
+`d.status(id)` is the effective status, `d.statuses()` all of them.
+
+The queries: `predecessors(id)` and `successors(id)` are the direct
+neighbours on `blocks` and `enables` edges; `upstream(id)` and
+`downstream(id)` the transitive ones, in dependency order (by column, then
+as listed); `blockers(id)` the events that stand between `id` and being
+workable: every event that is not done on a chain of `blocks` edges upstream
+of it, up to the first done one on each chain, nearest first;
+`critical_path()` the longest chain of `blocks` / `enables` edges by count,
+or by the sum of `effort` where events carry one (an event without effort
+counts 1); `cycles()` every cycle of the precedence edges as the ids it runs
+through, and `back_edges()` the edges that close them. A cycle is a
+`LayoutIssue` of kind `cycle` and the layout still completes, drawing the
+named edge backwards through the channel.
+
+The layout runs left to right. An event's column is one past the deepest of
+its `blocks` / `enables` predecessors, an event with no predecessor sits in
+column 0, and `informs` edges move nothing (one that would point backwards
+is drawn through the channel). The critical path is kept on one straight
+row with its arrows thicker and leaving on the centre line, the other
+branches above and below with their long edges jogging once near the
+target. `LayoutOptions.for_kind("chain")` gives the kind its spacing.
+`render(d, focus="design")` (`--focus ID` on `export`, `focus=` on
+`build()`) emphasises one event's blocker chain: it, its blockers and the
+`blocks` edges between them are drawn as usual, everything else is dimmed.
+
+DOT exports the kind with the status colours, a hexagon for a milestone, a
+double border for a gate, a dashed border for an external event, the
+critical path's edges thicker and `informs` dashed without rank; Mermaid as
+`flowchart LR` with one `classDef` per status and every event in the class
+of its effective status; the draw.io file with the same shapes, colours and
+widths. `docs/chain_spec.json` is the bundled demo as a JSON spec in the
+kind's own form, events and edges as plain lists:
+
+```json
+{
+  "title": "Demo Safety Programme Chain",
+  "kind": "chain",
+  "events": [
+    {"id": "scope", "title": "Scope definition", "status": "done", "owner": "Programme lead", "due": "2026-09-04"},
+    {"id": "supplier", "title": "Supplier failure data", "kind": "external", "status": "late", "owner": "Supplier"},
+    {"id": "risk", "title": "Risk assessment", "owner": "Safety engineer", "due": "2026-11-20"}
+  ],
+  "edges": [
+    {"src": "scope", "dst": "risk"},
+    {"src": "supplier", "dst": "risk", "label": "failure rates"},
+    {"src": "scope", "dst": "supplier", "kind": "informs"}
+  ]
+}
+```
+
+`to_dict()` writes a chain in this form and `from_dict()` reads it (a spec
+with `events` is a chain). `asi-escher export chain_spec.json --format png`
+renders it; `asi-escher chain chain_spec.json --blockers design` prints the
+critical path, the cycles, the effective statuses and the blockers of the
+named events as JSON (without `--blockers`, of every event that has any).
+What a consumer passes: one `event()` per deliverable or ticket with its
+status (done / in progress / to do mapped to `done` / `active` / `pending`,
+`late` when the due date has passed), owner, due date and kind, and one
+`blocks()` per "blocks" link; escher derives the blocked ones, the blockers
+and the critical path.
+
+![Chain](docs/img/chain_demo.png)
+
 ### Legibility: the OCR quality gate
 
 A diagram is only competent when a reader can read it, so a rendered PNG can
 be read back with the built-in Windows OCR engine (`Windows.Media.Ocr`
 through PowerShell 5.1, no Tesseract) and compared with what it was meant to
 say: every node title, every signal id (`CA-01`, `FB-12`) and, in a control
-structure, every algorithm code and process-model title. `build(d, out,
+structure, every algorithm code and process-model title; in a chain, every
+title. `build(d, out,
 ocr=True)` (`--ocr` on the command line) adds the report under `"ocr"` (an
 `OcrReport`: `verdict`, `lines`, `found`, `missing`, `competent`) and one
 `LayoutIssue` of kind `ocr` per unreadable label; `ocr_check(png_path,
@@ -214,8 +326,8 @@ comes back intact instead of as a control byte of the console code page,
 which used to break the JSON report and make the gate say `unavailable`.
 When the engine is not there (no Windows, no language pack, as on CI) the
 report says `ocr unavailable` as one issue and never fails a build. The gallery runs the
-gate on every control structure; the test suite asserts the bundled
-`control_structure_demo` is competent whenever the engine is available.
+gate on every control structure and chain; the test suite asserts the bundled
+`control_structure_demo` and `chain_demo` are competent whenever the engine is available.
 
 ## Command line
 
@@ -230,25 +342,27 @@ asi-escher build a.json b.json --formats svg,mmd
 asi-escher gallery -o out                       # all bundled examples + index.html
 asi-escher example state_autonomy_modes -o out  # one bundled example
 asi-escher verify out/diagram.png --expect "Vehicle Controller" CA-01 V1   # the OCR gate
+asi-escher chain docs/chain_spec.json --blockers design   # a chain's blockers and critical path as JSON
 asi-escher list                                 # names of bundled examples
 ```
 
 `export` writes the format set (`--format drawio|png|svg`, repeatable;
 `--all` for the three; default `drawio` and `png`), with `--name STEM`,
-`--dpi N`, `--no-provenance` and `--ocr`. `build`, `gallery` and `example`
+`--dpi N`, `--no-provenance`, `--ocr` and, for a chain, `--focus ID`. `build`, `gallery` and `example`
 share the options `-o/--out DIR` (default `out`), `--dpi N` (PNG resolution,
 default 160), `--formats drawio,png,svg,dot,mmd` (any subset, default all),
 `--ranksep PX` and `--nodesep PX` (layout spacing), `--no-provenance` and
 `--ocr`. `build` also takes `--name STEM` for a single spec; `build` and
 `export` read one spec from stdin when the file argument is `-`.
 `asi-escher verify PNG --expect LABEL... [--json]` is the OCR gate on its
-own. `asi-escher --version` prints the installed version.
+own; `asi-escher chain SPEC [--blockers ID...]` the chain queries as JSON
+(see Chains). `asi-escher --version` prints the installed version.
 
 Run `asi-escher gallery` and open `out/index.html` to see every diagram
 family rendered, with its DOT and Mermaid source alongside. Layout issues
 (see below) are printed to stderr per diagram.
 
-The seventeen bundled examples (`src/asi_escher/examples.py`), all themed
+The eighteen bundled examples (`src/asi_escher/examples.py`), all themed
 around an autonomous wheel loader and its safety system:
 
 | Family | Examples |
@@ -258,6 +372,7 @@ around an autonomous wheel loader and its safety system:
 | State machine | `state_autonomy_modes`, `state_estop_channel` |
 | SysML | `bdd_wheel_loader`, `bdd_safety_system`, `ibd_safety_controller`, `req_safety_requirements` |
 | Control structure | `control_structure_demo` |
+| Chain | `chain_demo` |
 
 ### JSON spec
 
@@ -285,13 +400,15 @@ node `id` and edge `src`/`dst` is optional.
 }
 ```
 
-See [docs/example_spec.json](docs/example_spec.json) for a complete example
-and [docs/control_structure_spec.json](docs/control_structure_spec.json) for
-a control structure. Node fields: `id`, `label`, `kind`, `lane`,
+See [docs/example_spec.json](docs/example_spec.json) for a complete example,
+[docs/control_structure_spec.json](docs/control_structure_spec.json) for a
+control structure and [docs/chain_spec.json](docs/chain_spec.json) for a
+chain in its own `events` form (see Chains). Node fields: `id`, `label`, `kind`, `lane`,
 `stereotype`, `compartments` (list of `[title, [lines]]`), `fill`, `stroke`,
 and for a control structure `responsibility`, `algorithms` (list of
 `[code, name]`), `process_model` (`[title, [entries]]`) and, on a note,
-`attached_to`. Edge fields: `src`, `dst`, `label`, `kind`, `style` (`solid`,
+`attached_to`; a chain event's `status`, `owner`, `due`, `note` and
+`effort` travel on any node when set. Edge fields: `src`, `dst`, `label`, `kind`, `style` (`solid`,
 `dashed`, `dotted`), `src_port`, `dst_port`, and `signals` (a list of lines;
 the label is their join when no label is given).
 
@@ -300,10 +417,11 @@ the label is their join when no label is given).
 `Diagram(title, kind="activity", direction="TB", frame=None)`
 
 * `kind` is one of `activity`, `flowchart`, `state`, `bdd`, `ibd`, `req`,
-  `control_structure`. It selects the Mermaid diagram type and, for a control
-  structure, the layout rules above; the renderer draws any node kind in any
-  diagram.
-* `direction` is `TB` or `LR`.
+  `control_structure`, `chain`. It selects the Mermaid diagram type and, for
+  a control structure or a chain, the layout rules above; the renderer draws
+  any node kind in any diagram.
+* `direction` is `TB` or `LR`; when not given, a chain runs left to right
+  and every other kind top to bottom.
 * `frame` draws a SysML diagram frame with the given header, e.g.
   `"bdd [Package] WheelLoader"`.
 
@@ -311,10 +429,12 @@ Shorthand constructors: `start()`, `end()`, `action()`, `decision()`,
 `merge()`, `fork()`, `join()`, `note(id, label, lane=None, attached_to=None)`,
 `state()`, `block()`, `requirement()`, `controller(id, title, kind=...,
 responsibility=..., algorithms=[(code, name)], process_model=(title,
-[entries]))`, plus the general `node(id, label, kind, **fields)`. Edges come
+[entries]))`, `event(id, title, *, status, kind, owner, due, note, effort)`,
+plus the general `node(id, label, kind, **fields)`. Edges come
 from `edge(src, dst, label="", kind="flow", style="solid", src_port=None,
 dst_port=None)`, `chain(*ids, labels=[...])`, `control_action(src, dst,
-[signals])` and `feedback(src, dst, [signals])`. Swimlanes come from
+[signals])`, `feedback(src, dst, [signals])` and `blocks(predecessor,
+successor, *, kind, label)`. Swimlanes come from
 `lane(id, title)`; when a diagram has lanes, every node must name one.
 
 Invalid input raises early: unknown kinds, duplicate ids, edges to missing
@@ -331,7 +451,8 @@ The layout is a deterministic layered (Sugiyama-style) algorithm:
    the right, or at the bottom for left-to-right diagrams);
 2. longest-path layering, with side inputs such as notes pulled next to
    their consumer (a control structure layers by its control hierarchy, in
-   the tiers described above);
+   the tiers described above; a chain by its `blocks` / `enables` edges,
+   with the critical path pinned on one row);
 3. dummy nodes for edges that span several layers;
 4. barycenter ordering, lane-aware when swimlanes are present;
 5. per-component coordinate balancing and chain straightening, with
@@ -357,6 +478,7 @@ it says so. After `layout()` (or `build()`), `diagram.issues` holds one
 | `label_overlap` | an edge label had to be placed touching a node or another label |
 | `edge_through_node` | a routed edge segment passes through a node it does not connect |
 | `ocr` | the OCR gate could not read a label in the PNG, or the engine was unavailable (only with `ocr=True`) |
+| `cycle` | a chain's precedence edges run in a circle; the named edge is drawn backwards |
 
 Each issue carries a `message`, the `edge` `(src, dst)` and, where relevant,
 the `node` id. A single `LayoutWarning` (a `UserWarning` subclass) is also
@@ -409,13 +531,16 @@ trips), `test_layout.py` (geometric invariants), `test_issues.py` (layout
 issue reporting), `test_export.py` (DOT and Mermaid), `test_drawio.py` (the
 draw.io file parsed back, positions equal to the layout, provenance marks),
 `test_control_structure.py` (the kind: builder, layout rules, renderer,
-exports), `test_ocr.py` (the matcher, the unavailable path, the CLI and the
+exports), `test_chain.py` (the chain kind: builder, derived status, the
+queries, the column rule and the critical row, renderer, exports, the spec
+form, the CLI verb and the demo's legibility), `test_ocr.py` (the matcher, the unavailable path, the CLI and the
 demo's legibility under the real engine), `test_render_pipeline.py`
 (renderer isolation, `build()`, formats and the CLI), `test_version.py`
 (the version agrees across pyproject, README, CHANGELOG and the package) and
 `test_private_smoke.py` (skipped unless a private sibling dataset is beside
 the repo; asserts counts, the tier shape and the OCR verdict only);
-`conftest.py` provides every bundled example as a fixture. The geometry
+`conftest.py` provides every bundled example as a fixture and the session
+probe of the OCR engine. The geometry
 tests assert, for every bundled example, that nodes never overlap, edges are
 orthogonal, edges never pass through unrelated nodes, all geometry and labels
 fit the canvas, layout is repeatable and no layout issues are reported.

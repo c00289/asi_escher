@@ -50,10 +50,13 @@ class LayoutOptions:
 
         A control structure gets wider gaps: its boxes are large, its signal
         labels hang beside the arrows and a feedback arrow runs parallel to
-        the control action it answers.
+        the control action it answers.  A chain runs left to right in
+        columns a little further apart than the rows.
         """
         if kind == "control_structure":
             return cls(ranksep=110.0, nodesep=160.0)
+        if kind == "chain":
+            return cls(ranksep=64.0, nodesep=30.0)
         return cls()
 
 
@@ -88,25 +91,41 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
             _transpose(d)
         return d
     control = d.kind == "control_structure"
+    chain = d.kind == "chain"
     order, attached = _detach_notes(d)
     if control:
         # feedback points up the hierarchy: lay it out reversed, beside the
         # control action it answers, and turn it round at the end
         for e in d.edges:
             e.back = e.kind == "feedback" and e.src != e.dst
-    _find_back_edges(d)
+    if chain:
+        # the precedence edges that close a cycle are drawn backwards (the
+        # model's search decides which, so the cycle it reports is the one
+        # broken here); an ``informs`` edge never ranks, so it is kept out
+        # of the layering and only the forward ones are routed as plain edges
+        backs = {id(e) for e in d.back_edges()}
+        for e in d.edges:
+            e.back = id(e) in backs or e.kind == "informs" or e.src == e.dst
+    else:
+        _find_back_edges(d)
     reversed_edges = _reverse_back_edges(d) if control else []
     if control:
         _assign_control_layers(d, reversed_edges)
     else:
         _assign_layers(d)
+    if chain:
+        for e in d.edges:
+            if e.kind == "informs" and e.src != e.dst and d.nodes[e.src].layer < d.nodes[e.dst].layer:
+                e.back = False
     _insert_dummies(d)
     layers, preds, succs = _order(d, opts)
     lateral_gaps = _lateral_gaps(d, opts) if control else None
+    critical = d.critical_edges() if chain else None
+    pinned = _critical_row(d, critical) if chain else None
     grow = [0.0] * len(layers)
     for _attempt in range(_CHANNEL_ATTEMPTS if control else 1):
-        _assign_coordinates(d, layers, preds, succs, opts, lateral_gaps, grow)
-        _route_edges(d, layers, opts)
+        _assign_coordinates(d, layers, preds, succs, opts, lateral_gaps, grow, pinned)
+        _route_edges(d, layers, opts, critical)
         _attach_notes(d, order, attached, opts)
         d.issues = []
         boxes = _place_labels(d, swap=d.direction == "LR")
@@ -116,6 +135,8 @@ def layout(d: Diagram, opts: LayoutOptions | None = None) -> Diagram:
             break
         order, attached = _detach_notes(d)
     _check_edge_crossings(d)
+    if chain:
+        _note_cycles(d)
     _normalize(d, opts, boxes)
     for e in reversed_edges:
         e.src, e.dst = e.dst, e.src
@@ -343,6 +364,24 @@ def _lateral_gaps(d: Diagram, opts: LayoutOptions) -> dict:
     return extra
 
 
+def _critical_row(d: Diagram, critical: set) -> set:
+    """The nodes to keep on one row: the events of the critical path and the
+    dummies of the edges between them (run after :func:`_insert_dummies`)."""
+    pinned = set()
+    for e in d.edges:
+        if (e.src, e.dst) in critical and not e.back:
+            pinned.update(e.path)
+    return pinned
+
+
+def _note_cycles(d: Diagram) -> None:
+    """One ``cycle`` issue per cycle of a chain, naming the edge drawn backwards."""
+    for back, ids in zip(d.back_edges(), d.cycles(), strict=True):
+        d.issues.append(LayoutIssue(
+            "cycle", "cycle " + " -> ".join(ids + ids[:1]) + f"; the edge {back.src}->{back.dst} is drawn backwards",
+            edge=(back.src, back.dst)))
+
+
 def _insert_dummies(d: Diagram) -> None:
     counter = 0
     for e in d.edges:
@@ -499,7 +538,7 @@ def _grow_channels(d: Diagram, layers, grow: list) -> bool:
 
 
 def _assign_coordinates(d: Diagram, layers, preds, succs, opts: LayoutOptions, extra=None,
-                        grow=None) -> None:
+                        grow=None, pinned=None) -> None:
     nodes = d.nodes
     gaps = _gap_for_labels(d, len(layers))
     if grow:
@@ -519,7 +558,7 @@ def _assign_coordinates(d: Diagram, layers, preds, succs, opts: LayoutOptions, e
     if d.lanes:
         _lane_coordinates(d, layers, preds, succs, opts)
     else:
-        _free_coordinates(d, layers, preds, succs, opts, extra)
+        _free_coordinates(d, layers, preds, succs, opts, extra, pinned)
 
 
 def _pack(ids, nodes, gap, start=0.0, extra=None):
@@ -587,10 +626,11 @@ def _balance(layers, nodes, preds, succs, gap, rounds=24, extra=None) -> None:
                 nodes[nid].x = xs[i] - shift
 
 
-def _free_coordinates(d, layers, preds, succs, opts, extra=None) -> None:
+def _free_coordinates(d, layers, preds, succs, opts, extra=None, pinned=None) -> None:
     """Place each connected component independently, then pack the components
     side by side.  Balancing components together lets unconnected parts drift
-    apart a little every round, which compounds into large empty gaps."""
+    apart a little every round, which compounds into large empty gaps.
+    ``pinned`` (a chain's critical path) is then put on one row."""
     nodes = d.nodes
     gap = opts.nodesep
     offset = 0.0
@@ -612,11 +652,65 @@ def _free_coordinates(d, layers, preds, succs, opts, extra=None) -> None:
                 nodes[nid].x -= width / 2
         _balance(sub, nodes, preds, succs, gap, extra=extra)
         _snap(sub, nodes, preds, succs, gap, extra=extra)
+        if pinned and member & pinned:
+            _pin_row(sub, nodes, preds, succs, gap, pinned)
         minx = min(nodes[nid].left for nid in comp)
         maxx = max(nodes[nid].right for nid in comp)
         for nid in comp:
             nodes[nid].x += offset - minx
         offset += (maxx - minx) + gap * 2
+
+
+def _pin_row(layers, nodes, preds, succs, gap, pinned, rounds=8) -> None:
+    """Put the pinned nodes (a chain's critical path and the dummies of its
+    edges, at most one per layer) on one x, the median of where balancing
+    left them, pushing their neighbours in the layer outward as far as the
+    separation needs; then let the other nodes drift back toward their own
+    neighbours between the fixed ones.  Nothing is reordered."""
+    xs = sorted(nodes[nid].x for layer_nodes in layers for nid in layer_nodes if nid in pinned)
+    if not xs:
+        return
+    target = xs[len(xs) // 2]
+
+    def sep(a, b):
+        g = gap if (a.kind != "dummy" and b.kind != "dummy") else gap * 0.6
+        return (a.w + b.w) / 2 + g
+
+    for layer_nodes in layers:
+        idx = [i for i, nid in enumerate(layer_nodes) if nid in pinned]
+        if not idx:
+            continue
+        i = idx[0]
+        nodes[layer_nodes[i]].x = target
+        for j in range(i - 1, -1, -1):
+            a, b = nodes[layer_nodes[j]], nodes[layer_nodes[j + 1]]
+            a.x = min(a.x, b.x - sep(a, b))
+        for j in range(i + 1, len(layer_nodes)):
+            a, b = nodes[layer_nodes[j - 1]], nodes[layer_nodes[j]]
+            b.x = max(b.x, a.x + sep(a, b))
+    for _ in range(rounds):
+        for layer_nodes in layers:
+            for i, nid in enumerate(layer_nodes):
+                if nid in pinned:
+                    continue
+                n = nodes[nid]
+                nb = [v for v in preds[nid] + succs[nid] if nodes[v].layer != n.layer]
+                if not nb:
+                    continue
+                if n.kind == "dummy" and preds[nid]:
+                    # a long edge follows its source and jogs once, near its target
+                    want = nodes[preds[nid][0]].x
+                else:
+                    want = sum(nodes[v].x for v in nb) / len(nb)
+                lo, hi = -1e9, 1e9
+                if i > 0:
+                    m = nodes[layer_nodes[i - 1]]
+                    lo = m.x + sep(m, n)
+                if i < len(layer_nodes) - 1:
+                    m = nodes[layer_nodes[i + 1]]
+                    hi = m.x - sep(n, m)
+                if lo <= hi:
+                    n.x = min(max(want, lo), hi)
 
 
 def _snap(layers, nodes, preds, succs, gap, bounds=None, max_jog=90.0, extra=None) -> None:
@@ -714,7 +808,10 @@ def _lane_coordinates(d, layers, preds, succs, opts) -> None:
 _CONTROL_JOG = 12.0       # a control-structure arrow jogs this far below its source box
 
 
-def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
+def _route_edges(d: Diagram, layers, opts: LayoutOptions, critical=None) -> None:
+    """Route every edge orthogonally; ``critical`` (the ``(src, dst)`` pairs of
+    a chain's critical path) keeps those edges on the centre line of the boxes
+    they join, so the path runs straight."""
     nodes = d.nodes
     control = d.kind == "control_structure"
     band_bottom = [max((nodes[n].bottom for n in layer_nodes), default=0.0) for layer_nodes in layers]
@@ -745,6 +842,18 @@ def _route_edges(d: Diagram, layers, opts: LayoutOptions) -> None:
         # the signal stacks beside them have room
         span = node.w * (0.7 if node.kind in ("fork", "join") or node.kind in CONTROL_NODE_KINDS else 0.5)
         n = len(es)
+        crit = [e for e in es if critical and (e.src, e.dst) in critical]
+        if crit:
+            # the critical edge leaves (arrives) on the centre line; the others
+            # take the half of the span on their own side of it
+            c = crit[0]
+            key = (lambda e: nodes[e.path[1]].x) if outgoing else (lambda e: nodes[e.path[-2]].x)
+            left = [e for e in es if e is not c and key(e) <= node.x]
+            right = [e for e in es if e is not c and key(e) > node.x]
+            off = {id(c): 0.0}
+            off.update((id(e), -span / 2 * (len(left) - i) / len(left)) for i, e in enumerate(left))
+            off.update((id(e), span / 2 * (i + 1) / len(right)) for i, e in enumerate(right))
+            return off
         return {id(e): -span / 2 + span * i / (n - 1) for i, e in enumerate(es)}
 
     # a lateral edge runs straight between two boxes of one layer; a pair of

@@ -1,9 +1,10 @@
 """asi_escher - pure-Python diagram generator.
 
 Builds activity diagrams, flowcharts, state machines, SysML-style block /
-internal-block / requirement diagrams and STPA control structures, lays them
-out with a built-in layered (Sugiyama-style) algorithm, writes the layout as
-an editable draw.io file and renders it to PNG + SVG via matplotlib.  It also
+internal-block / requirement diagrams, STPA control structures and chains
+(precedence networks of a plan: what blocks what), lays them out with a
+built-in layered (Sugiyama-style) algorithm, writes the layout as an editable
+draw.io file and renders it to PNG + SVG via matplotlib.  It also
 exports Graphviz DOT and Mermaid source so the same diagram can be re-rendered
 elsewhere when those toolchains are available.
 
@@ -19,6 +20,9 @@ Typical use::
 from .export import to_dot, to_drawio, to_mermaid
 from .layout import LayoutOptions, LayoutWarning, layout
 from .model import (
+    CHAIN_EDGE_KINDS,
+    CHAIN_NODE_KINDS,
+    CHAIN_STATUSES,
     CONTROL_EDGE_KINDS,
     CONTROL_NODE_KINDS,
     DIAGRAM_KINDS,
@@ -41,6 +45,7 @@ __version__ = package_version()
 __all__ = [
     "Diagram", "Node", "Edge", "Lane", "LayoutIssue", "LayoutWarning",
     "DIAGRAM_KINDS", "NODE_KINDS", "EDGE_KINDS", "EDGE_STYLES", "CONTROL_NODE_KINDS", "CONTROL_EDGE_KINDS",
+    "CHAIN_NODE_KINDS", "CHAIN_EDGE_KINDS", "CHAIN_STATUSES",
     "LayoutOptions", "layout", "render", "THEME",
     "to_dot", "to_mermaid", "to_drawio", "build",
     "FORMATS", "DEFAULT_FORMATS", "ALL_FORMATS",

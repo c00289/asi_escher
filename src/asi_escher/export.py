@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-from .metrics import DASHED_EDGE_KINDS, SMALL_PX, control_sections, edge_label, text_box
-from .model import CONTROL_NODE_KINDS, Diagram, Edge, Node
+from .metrics import DASHED_EDGE_KINDS, SMALL_PX, chain_sublines, control_sections, edge_label, text_box
+from .model import CHAIN_NODE_KINDS, CONTROL_NODE_KINDS, Diagram, Edge, Node
 from .provenance import drawio_comment, drawio_note, slug
 from .render import THEME
 
@@ -26,6 +26,19 @@ def _html(s: str) -> str:
              .replace("\n", "<BR/>"))
 
 
+def _chain_facts(d: Diagram) -> tuple[dict, set]:
+    """The effective statuses and the critical-path edges of a chain (empty
+    for any other kind), computed once per export."""
+    if d.kind != "chain" and not any(n.kind in CHAIN_NODE_KINDS for n in d.nodes.values()):
+        return {}, set()
+    return d.statuses(), d.critical_edges()
+
+
+def _status_colours(n: Node, status: str) -> tuple[str, str]:
+    fill, stroke = THEME.get("status_" + status, THEME["status_pending"])
+    return n.fill or fill, n.stroke or stroke
+
+
 # ====================================================================== DOT
 def to_dot(d: Diagram) -> str:
     out = [f"digraph {_q(d.title)} {{"]
@@ -34,6 +47,7 @@ def to_dot(d: Diagram) -> str:
     out.append('  node  [fontname="Helvetica", fontsize=11, style="filled", penwidth=1.3];')
     out.append('  edge  [fontname="Helvetica", fontsize=9, color="#3E4C59", arrowsize=0.8];')
     real = [n for n in d.nodes.values() if n.kind != "dummy"]
+    statuses, critical = _chain_facts(d)
     if d.lanes:
         for i, ln in enumerate(d.lanes):
             fill = THEME["lane_a"] if i % 2 == 0 else THEME["lane_b"]
@@ -41,16 +55,16 @@ def to_dot(d: Diagram) -> str:
             out.append(f"    label={_q(ln.title)}; style=filled; fillcolor={_q(fill)}; color=\"#B8C2CC\";")
             for n in real:
                 if n.lane == ln.id:
-                    out.append("    " + _dot_node(n))
+                    out.append("    " + _dot_node(n, statuses.get(n.id, "pending")))
             out.append("  }")
         for n in real:
             if n.lane is None or d.lane_index(n.lane) < 0:
-                out.append("  " + _dot_node(n))
+                out.append("  " + _dot_node(n, statuses.get(n.id, "pending")))
     else:
         for n in real:
-            out.append("  " + _dot_node(n))
+            out.append("  " + _dot_node(n, statuses.get(n.id, "pending")))
     for e in d.edges:
-        out.append("  " + _dot_edge(e))
+        out.append("  " + _dot_edge(e, (e.src, e.dst) in critical))
     out.append("}")
     return "\n".join(out) + "\n"
 
@@ -60,11 +74,13 @@ def _ident(s: str) -> str:
     return out if out and not out[0].isdigit() else "n_" + out
 
 
-def _dot_node(n: Node) -> str:
+def _dot_node(n: Node, status: str = "pending") -> str:
     k = n.kind
     fill, stroke = THEME.get(k, ("#F4F4F4", "#5F6B7A"))
     fill = n.fill or fill
     stroke = n.stroke or stroke
+    if k in CHAIN_NODE_KINDS:
+        fill, stroke = _status_colours(n, status)
     base = f'fillcolor={_q(fill)}, color={_q(stroke)}'
     if k == "start":
         attrs = 'shape=circle, label="", width=0.22, height=0.22, fixedsize=true, fillcolor="#1F2933", color="#1F2933"'
@@ -96,6 +112,14 @@ def _dot_node(n: Node) -> str:
                  "sensor": "rounded,filled"}.get(k, "filled")
         extra = ", peripheries=2" if k == "controlled_process" else ""
         attrs = f'shape=box, style="{style}", label=<{_dot_control_table(n)}>, {base}{extra}'
+    elif k in CHAIN_NODE_KINDS:
+        shape = {"milestone": "hexagon", "gate": "box", "external": "box"}.get(k, "box")
+        style = {"event": "rounded,filled", "external": "dashed,filled"}.get(k, "filled")
+        extra = ", peripheries=2" if k == "gate" else ""
+        label = f"<B>{_html(n.label)}</B>"
+        for _kind, text in chain_sublines(n):
+            label += f'<BR/><FONT POINT-SIZE="9">{_html(text)}</FONT>'
+        attrs = f'shape={shape}, style="{style}", label=<{label}>, {base}{extra}'
     else:  # action / process
         attrs = f'shape=box, style="rounded,filled", label={_q(n.label)}, {base}'
     return f'{_q(n.id)} [{attrs}];'
@@ -131,12 +155,16 @@ def _dot_control_table(n: Node) -> str:
     return '<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">' + "".join(rows) + "</TABLE>"
 
 
-def _dot_edge(e: Edge) -> str:
+def _dot_edge(e: Edge, critical: bool = False) -> str:
     attrs = []
     label = edge_label(e)
     if label:
         attrs.append(f"label={_q(label)}")
-    if e.kind in ("control_action", "feedback"):
+    if e.kind in ("blocks", "enables"):
+        attrs.append(f"penwidth={2.6 if critical else (1.4 if e.kind == 'blocks' else 0.8)}")
+    if e.kind == "informs":
+        attrs += ["style=dashed, arrowhead=vee", "constraint=false"]      # orders nothing
+    elif e.kind in ("control_action", "feedback"):
         color = THEME[e.kind]
         attrs.append(f'color={_q(color)}, fontcolor={_q(color)}, penwidth=1.5')
         if e.kind == "feedback":
@@ -169,6 +197,8 @@ def to_mermaid(d: Diagram) -> str:
         return _mermaid_state(d)
     if d.kind in ("bdd", "req"):
         return _mermaid_class(d)
+    if d.kind == "chain":
+        return _mermaid_chain(d)
     return _mermaid_flow(d)
 
 
@@ -270,6 +300,43 @@ def _mermaid_flow(d: Diagram) -> str:
             fill, stroke = THEME[k]
             extra = ",stroke-dasharray:6 3" if k == "environment" else ""
             out.append(f"  style {_mid(n.id)} fill:{n.fill or fill},stroke:{n.stroke or stroke}{extra}")
+    return "\n".join(out) + "\n"
+
+
+def _mermaid_chain(d: Diagram) -> str:
+    """A chain as ``flowchart LR``: one ``classDef`` per status, every event
+    in the class of its effective status, a hexagon for a milestone, a
+    subroutine box for a gate, a dashed border for an external event; the
+    critical path's links thicker, ``informs`` dotted."""
+    out = [f"---\ntitle: {d.title}\n---", f"flowchart {'TD' if d.direction == 'TB' else 'LR'}"]
+    statuses, critical = _chain_facts(d)
+    real = [n for n in d.nodes.values() if n.kind != "dummy"]
+    for n in real:
+        text = f"<b>{n.label}</b>" + "".join(f"<br/><small>{text}</small>" for _k, text in chain_sublines(n))
+        i = _mid(n.id)
+        if n.kind == "milestone":
+            shape = f"{i}{{{{{_mq(text)}}}}}"
+        elif n.kind == "gate":
+            shape = f"{i}[[{_mq(text)}]]"
+        else:
+            shape = f"{i}[{_mq(text)}]"
+        out.append(f"  {shape}:::{statuses.get(n.id, 'pending')}")
+    link_styles = []
+    for i, e in enumerate(d.edges):
+        arrow = "-.->" if e.kind == "informs" or e.style == "dashed" else "-->"
+        lab = f"|{_mq(e.label)}|" if e.label else ""
+        out.append(f"  {_mid(e.src)} {arrow}{lab} {_mid(e.dst)}")
+        if (e.src, e.dst) in critical:
+            link_styles.append(f"  linkStyle {i} stroke-width:3px")
+        elif e.kind == "enables":
+            link_styles.append(f"  linkStyle {i} stroke-width:1px")
+    out.extend(link_styles)
+    for status in ("done", "active", "blocked", "pending", "late"):
+        fill, stroke = THEME["status_" + status]
+        out.append(f"  classDef {status} fill:{fill},stroke:{stroke},color:#1F2933")
+    for n in real:
+        if n.kind == "external":
+            out.append(f"  style {_mid(n.id)} stroke-dasharray:6 3")
     return "\n".join(out) + "\n"
 
 
@@ -378,18 +445,19 @@ def to_drawio(d: Diagram, provenance: bool = True, name: str | None = None) -> s
                                    f"fillColor={fill};strokeColor={THEME['lane_line']};",
                              vertex="1", parent="1")
         _geometry(cell, x, y, w, h)
+    statuses, critical = _chain_facts(d)
     node_ids = {}
     for n in d.real_nodes():
         node_ids[n.id] = ids.take(n.id)
         cell = ET.SubElement(root, "mxCell", id=node_ids[n.id], value=_drawio_label(n),
-                             style=_drawio_node_style(n), vertex="1", parent="1")
+                             style=_drawio_node_style(n, statuses.get(n.id, "pending")), vertex="1", parent="1")
         _geometry(cell, n.left, n.top, n.w, n.h)
     for i, e in enumerate(d.edges, start=1):
         label = edge_label(e)
         if e.src_port or e.dst_port:
             label = " / ".join(x for x in (e.src_port, label, e.dst_port) if x)
         cell = ET.SubElement(root, "mxCell", id=ids.take(f"e{i}"), value=_xhtml(label),
-                             style=_drawio_edge_style(e, d), edge="1", parent="1",
+                             style=_drawio_edge_style(e, d, (e.src, e.dst) in critical), edge="1", parent="1",
                              source=node_ids[e.src], target=node_ids[e.dst])
         geo = ET.SubElement(cell, "mxGeometry", relative="1")
         geo.set("as", "geometry")
@@ -485,14 +553,22 @@ def _drawio_label(n: Node) -> str:
                 css = f"border-top:1px solid {stroke};"
             head += f'<div style="text-align:left;margin-top:4px;padding:3px 6px;{css}">{body}</div>'
         return head
+    if k in CHAIN_NODE_KINDS:
+        head = f"<b>{_xhtml(n.label)}</b>"
+        for kind, text in chain_sublines(n):
+            style = f"font-size:9px;color:{THEME['chain_small']}" + (";font-style:italic" if kind == "note" else "")
+            head += f'<br><font style="{style}">{_xhtml(text)}</font>'
+        return head
     return _xhtml(n.label)
 
 
-def _drawio_node_style(n: Node) -> str:
+def _drawio_node_style(n: Node, status: str = "pending") -> str:
     k = n.kind
     fill, stroke = THEME.get(k, ("#F4F4F4", "#5F6B7A"))
     fill = n.fill or fill
     stroke = n.stroke or stroke
+    if k in CHAIN_NODE_KINDS:
+        fill, stroke = _status_colours(n, status)
     colours = f"fillColor={fill};strokeColor={stroke};"
     text = "whiteSpace=wrap;html=1;"
     if k == "start":
@@ -529,15 +605,24 @@ def _drawio_node_style(n: Node) -> str:
         }.get(k, "rounded=0;")
         width = "" if "strokeWidth" in shape else "strokeWidth=1.5;"
         return f"{shape}{text}{valign}align=center;fontStyle=1;{colours}{width}"
+    if k in CHAIN_NODE_KINDS:
+        shape = {
+            "milestone": "shape=hexagon;perimeter=hexagonPerimeter2;size=0.2;",
+            "gate": "shape=ext;double=1;",
+            "external": "rounded=0;dashed=1;dashPattern=6 3;",
+        }.get(k, "rounded=1;arcSize=10;")
+        return f"{shape}{text}align=center;{colours}strokeWidth=1.5;"
     if k == "process":
         return f"shape=process;{text}{colours}"
     return f"rounded=1;arcSize=12;{text}{colours}"
 
 
-def _drawio_edge_style(e: Edge, d: Diagram) -> str:
+def _drawio_edge_style(e: Edge, d: Diagram, critical: bool = False) -> str:
     parts = ["html=1", "rounded=0", "labelBackgroundColor=#FFFFFF", f"strokeColor={THEME['edge']}"]
     k = e.kind
-    if k in ("control_action", "feedback"):
+    if k in ("blocks", "enables"):
+        parts += [f"strokeWidth={2.6 if critical else (1.5 if k == 'blocks' else 0.8)}", "endArrow=block", "endFill=1"]
+    elif k in ("control_action", "feedback"):
         colour = THEME[k]
         parts += [f"strokeColor={colour}", f"fontColor={colour}", "strokeWidth=1.5", "endArrow=block", "endFill=1"]
     elif k in DASHED_EDGE_KINDS:

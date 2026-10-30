@@ -12,7 +12,7 @@ from functools import lru_cache
 from matplotlib.font_manager import FontProperties
 from matplotlib.textpath import TextPath
 
-from .model import CONTROL_NODE_KINDS, Edge, Node
+from .model import CHAIN_NODE_KINDS, CONTROL_NODE_KINDS, Edge, Node
 
 FONT_PX = 12.5            # body text height in px
 SMALL_PX = 10.5           # edge labels / stereotypes
@@ -27,6 +27,12 @@ CONTROL_PAD = 10.0        # inner padding of a control-structure box
 CONTROL_SECTION_GAP = 5.0
 CONTROL_MIN_WIDTH = 150.0             # narrowest control-structure box ...
 CONTROL_WIDTH_PER_ALGORITHM = 12.0    # ... plus this much per algorithm line
+WRAP_WIDTH_CHAIN = 18     # characters per title line of a chain event
+WRAP_WIDTH_CHAIN_NOTE = 24
+CHAIN_PAD = 11.0          # inner padding of a chain event box
+CHAIN_MIN_WIDTH = 112.0
+CHAIN_POINT = 13.0        # how far a milestone's pointed ends stick out
+CHAIN_GATE_INSET = 4.0    # the gap between the two borders of a gate
 
 _prop = FontProperties(family=FONT_FAMILY)
 _prop_b = FontProperties(family=FONT_FAMILY, weight="bold")
@@ -38,9 +44,9 @@ EDGE_STEREOTYPES = {
 }
 
 # Edge kinds drawn as dashed lines whatever the author's ``style`` (UML
-# dependencies and the requirement relationships); shared by the renderer
-# and the exporters.
-DASHED_EDGE_KINDS = ("dependency", "satisfy", "derive", "verify", "refine", "allocate")
+# dependencies, the requirement relationships and a chain's ``informs``);
+# shared by the renderer and the exporters.
+DASHED_EDGE_KINDS = ("dependency", "satisfy", "derive", "verify", "refine", "allocate", "informs")
 
 
 def pt(px: float) -> float:
@@ -108,6 +114,9 @@ def size_node(n: Node) -> tuple[float, float]:
     if k in CONTROL_NODE_KINDS:
         n.lines = wrap(n.label, 30) if n.label else [""]
         return _size_control(n)
+    if k in CHAIN_NODE_KINDS:
+        n.lines = wrap(n.label, WRAP_WIDTH_CHAIN) if n.label else [""]
+        return _size_chain(n)
 
     lines = wrap(n.label, WRAP_WIDTH_DECISION if k == "decision" else WRAP_WIDTH)
     n.lines = lines
@@ -181,6 +190,40 @@ def control_sections(n: Node) -> list[tuple[str, list[str]]]:
 
 def control_section_height(lines: list[str]) -> float:
     return len(lines) * LINE_H + 2 * CONTROL_SECTION_GAP
+
+
+# ------------------------------------------------------------- chains -----
+def chain_sublines(n: Node) -> list[tuple[str, str]]:
+    """The small lines under a chain event's title: ``("owner", text)``,
+    ``("due", "due <date>")`` and one ``("note", line)`` per wrapped note
+    line, each only when set.  Shared by the sizing, the renderer and the
+    exporters so every output agrees on the text of a box."""
+    out: list[tuple[str, str]] = []
+    if n.owner:
+        out.append(("owner", n.owner))
+    if n.due:
+        out.append(("due", f"due {n.due}"))
+    if n.note:
+        out.extend(("note", line) for line in wrap(n.note, WRAP_WIDTH_CHAIN_NOTE))
+    return out
+
+
+def _size_chain(n: Node) -> tuple[float, float]:
+    """Size of a chain event box: the title in bold, the small lines under it;
+    a milestone is wider by its two points, a gate by its inner border."""
+    subs = chain_sublines(n)
+    widths = [text_width(line, TITLE_PX, bold=True) for line in n.lines]
+    widths.extend(text_width(text, SMALL_PX) for _, text in subs)
+    h = 2 * CHAIN_PAD + len(n.lines) * TITLE_PX * 1.35
+    if subs:
+        h += 3 + len(subs) * SMALL_PX * 1.3
+    w = max(CHAIN_MIN_WIDTH, max(widths) + 2 * CHAIN_PAD)
+    if n.kind == "milestone":
+        w += 2 * CHAIN_POINT
+    elif n.kind == "gate":
+        w += 2 * CHAIN_GATE_INSET
+        h += 2 * CHAIN_GATE_INSET
+    return w, max(40.0, h)
 
 
 def _size_control(n: Node) -> tuple[float, float]:

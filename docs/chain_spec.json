@@ -1,0 +1,169 @@
+{
+  "title": "Demo Safety Programme Chain",
+  "kind": "chain",
+  "direction": "LR",
+  "events": [
+    {
+      "id": "scope",
+      "title": "Scope definition",
+      "status": "done",
+      "owner": "Programme lead",
+      "due": "2026-09-04"
+    },
+    {
+      "id": "standards",
+      "title": "Standards review",
+      "status": "done",
+      "owner": "Safety engineer",
+      "due": "2026-09-11"
+    },
+    {
+      "id": "supplier",
+      "title": "Supplier failure data",
+      "kind": "external",
+      "status": "late",
+      "owner": "Supplier",
+      "due": "2026-10-16",
+      "note": "second reminder sent"
+    },
+    {
+      "id": "hazards",
+      "title": "Hazard list",
+      "status": "active",
+      "owner": "Safety engineer",
+      "due": "2026-11-06"
+    },
+    {
+      "id": "risk",
+      "title": "Risk assessment",
+      "owner": "Safety engineer",
+      "due": "2026-11-20"
+    },
+    {
+      "id": "metrics",
+      "title": "Hardware metrics",
+      "owner": "Hardware engineer",
+      "due": "2026-11-27"
+    },
+    {
+      "id": "concept",
+      "title": "Safety concept",
+      "owner": "Systems engineer",
+      "due": "2026-12-11"
+    },
+    {
+      "id": "reqs",
+      "title": "Safety requirements",
+      "owner": "Systems engineer",
+      "due": "2027-01-08"
+    },
+    {
+      "id": "design",
+      "title": "Safety design",
+      "owner": "Hardware engineer",
+      "due": "2027-02-05"
+    },
+    {
+      "id": "testplan",
+      "title": "Verification plan",
+      "owner": "Test lead",
+      "due": "2027-01-22"
+    },
+    {
+      "id": "verification",
+      "title": "Verification",
+      "owner": "Test lead",
+      "due": "2027-03-05"
+    },
+    {
+      "id": "validation",
+      "title": "Validation",
+      "owner": "Test lead",
+      "due": "2027-03-26"
+    },
+    {
+      "id": "assessment",
+      "title": "Safety assessment",
+      "kind": "gate",
+      "owner": "Assessor",
+      "due": "2027-04-09"
+    },
+    {
+      "id": "release",
+      "title": "Release for operation",
+      "kind": "milestone",
+      "owner": "Programme lead",
+      "due": "2027-04-23"
+    }
+  ],
+  "edges": [
+    {
+      "src": "scope",
+      "dst": "hazards"
+    },
+    {
+      "src": "hazards",
+      "dst": "risk"
+    },
+    {
+      "src": "supplier",
+      "dst": "risk"
+    },
+    {
+      "src": "supplier",
+      "dst": "metrics",
+      "label": "failure rates"
+    },
+    {
+      "src": "risk",
+      "dst": "concept"
+    },
+    {
+      "src": "concept",
+      "dst": "reqs"
+    },
+    {
+      "src": "standards",
+      "dst": "reqs",
+      "kind": "enables"
+    },
+    {
+      "src": "reqs",
+      "dst": "design"
+    },
+    {
+      "src": "metrics",
+      "dst": "design"
+    },
+    {
+      "src": "reqs",
+      "dst": "testplan"
+    },
+    {
+      "src": "risk",
+      "dst": "testplan",
+      "kind": "informs"
+    },
+    {
+      "src": "design",
+      "dst": "verification"
+    },
+    {
+      "src": "testplan",
+      "dst": "verification",
+      "kind": "enables"
+    },
+    {
+      "src": "verification",
+      "dst": "validation"
+    },
+    {
+      "src": "validation",
+      "dst": "assessment"
+    },
+    {
+      "src": "assessment",
+      "dst": "release"
+    }
+  ]
+}

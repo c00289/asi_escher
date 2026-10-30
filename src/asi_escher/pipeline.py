@@ -27,7 +27,7 @@ __all__ = ["FORMATS", "DEFAULT_FORMATS", "ALL_FORMATS", "build", "slug"]
 def build(d: Diagram, out_dir: str, name: str | None = None,
           opts: LayoutOptions | None = None, dpi: int = 160,
           formats: tuple[str, ...] = DEFAULT_FORMATS, provenance: bool = True,
-          ocr: bool = False) -> dict:
+          ocr: bool = False, focus: str | None = None) -> dict:
     """Lay out ``d`` and write ``<name>.<fmt>`` into ``out_dir``.
 
     ``name`` defaults to a slug of the diagram title.  ``formats`` selects any
@@ -37,7 +37,9 @@ def build(d: Diagram, out_dir: str, name: str | None = None,
     draw.io file (see :mod:`asi_escher.provenance`).  ``ocr`` reads the
     written PNG back with the Windows OCR engine and checks every expected
     label (:func:`asi_escher.ocr.ocr_check`); the misses are added to the
-    issues and the report returned under ``"ocr"``.
+    issues and the report returned under ``"ocr"``.  ``focus`` names an
+    event of a chain whose blocker chain the renderings emphasise (see
+    :func:`asi_escher.render`).
 
     Returns a dict with one path per written format plus ``size`` (canvas
     width, height in px), ``nodes`` and ``edges`` counts and ``issues`` (the
@@ -52,7 +54,8 @@ def build(d: Diagram, out_dir: str, name: str | None = None,
     layout(d, opts)
     paths = {fmt: os.path.join(out_dir, f"{name}.{fmt}") for fmt in formats}
     if "png" in paths or "svg" in paths:
-        render(d, png=paths.get("png"), svg=paths.get("svg"), dpi=dpi, provenance=provenance, name=name)
+        render(d, png=paths.get("png"), svg=paths.get("svg"), dpi=dpi, provenance=provenance, name=name,
+               focus=focus)
     if "drawio" in paths:
         with open(paths["drawio"], "w", encoding="utf-8") as f:
             f.write(to_drawio(d, provenance=provenance, name=name))

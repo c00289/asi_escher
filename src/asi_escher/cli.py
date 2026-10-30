@@ -5,6 +5,7 @@
     asi-escher gallery [-o OUT]
     asi-escher example NAME [-o OUT]
     asi-escher verify PICTURE.png --expect LABEL [LABEL ...]
+    asi-escher chain SPEC.json [--blockers ID ...]
     asi-escher list
 
 A spec file is the JSON form of :meth:`asi_escher.Diagram.to_dict`; see
@@ -21,7 +22,7 @@ import warnings
 
 from . import __version__
 from .examples import EXAMPLES
-from .gallery import build_gallery
+from .gallery import OCR_KINDS, build_gallery
 from .layout import LayoutOptions, LayoutWarning
 from .model import Diagram
 from .pipeline import ALL_FORMATS, DEFAULT_FORMATS, FORMATS, build
@@ -69,6 +70,7 @@ def _parser() -> argparse.ArgumentParser:
                    help="no footer on the renderings, no comment and note in the draw.io file")
     x.add_argument("--ocr", action="store_true",
                    help="read the PNG back with the Windows OCR engine and report unreadable labels")
+    x.add_argument("--focus", metavar="ID", help="a chain event whose blocker chain the renderings emphasise")
 
     g = sub.add_parser("gallery", help="render all bundled examples plus index.html")
     common(g)
@@ -81,6 +83,11 @@ def _parser() -> argparse.ArgumentParser:
     v.add_argument("png", help="the picture to read")
     v.add_argument("--expect", nargs="+", default=[], metavar="LABEL", help="labels that must be legible")
     v.add_argument("--json", action="store_true", help="print the report as JSON")
+
+    c = sub.add_parser("chain", help="print a chain spec's critical path, cycles, statuses and blockers as JSON")
+    c.add_argument("spec", help="JSON chain spec file; '-' reads it from stdin")
+    c.add_argument("--blockers", nargs="*", default=[], metavar="ID",
+                   help="events whose blockers to list (default: every event that has any)")
 
     sub.add_parser("list", help="list bundled example names")
     return p
@@ -125,6 +132,22 @@ def _verify(args) -> int:
     return 0 if report.competent else 1
 
 
+def _chain(args) -> int:
+    d = _load_spec(args.spec)
+    if d.kind != "chain":
+        print(f"error: {args.spec} is a {d.kind} diagram, not a chain", file=sys.stderr)
+        return 2
+    ids = list(args.blockers) or [n.id for n in d.real_nodes()]
+    blockers = {nid: d.blockers(nid) for nid in ids}
+    if not args.blockers:
+        blockers = {k: v for k, v in blockers.items() if v}
+    print(json.dumps({
+        "title": d.title, "events": len(d.real_nodes()), "critical_path": d.critical_path(),
+        "cycles": d.cycles(), "statuses": d.statuses(), "blockers": blockers,
+    }, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     warnings.simplefilter("ignore", LayoutWarning)      # issues are printed per diagram instead
@@ -135,15 +158,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.cmd == "verify":
             return _verify(args)
+        if args.cmd == "chain":
+            return _chain(args)
         if args.cmd == "gallery":
             build_gallery(args.out, dpi=args.dpi, formats=args.formats, provenance=not args.no_provenance,
-                          ocr=True if args.ocr else "control_structure")
+                          ocr=True if args.ocr else OCR_KINDS)
             return 0
         if args.cmd == "export":
             formats = tuple(FORMATS) if args.all else tuple(dict.fromkeys(args.format or DEFAULT_FORMATS))
             d = _load_spec(args.spec)
             _report(build(d, args.out, args.name, dpi=args.dpi, formats=formats,
-                          provenance=not args.no_provenance, ocr=args.ocr))
+                          provenance=not args.no_provenance, ocr=args.ocr, focus=args.focus))
             return 0
         if args.cmd == "example":
             table = dict(EXAMPLES)

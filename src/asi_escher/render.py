@@ -18,6 +18,8 @@ from matplotlib.patches import Circle, Ellipse, FancyBboxPatch, PathPatch, Polyg
 from matplotlib.path import Path
 
 from .metrics import (
+    CHAIN_GATE_INSET,
+    CHAIN_POINT,
     CONTROL_PAD,
     CONTROL_SECTION_GAP,
     DASHED_EDGE_KINDS,
@@ -26,13 +28,14 @@ from .metrics import (
     LINE_H,
     SMALL_PX,
     TITLE_PX,
+    chain_sublines,
     control_section_height,
     control_sections,
     edge_label,
     pt,
     text_width,
 )
-from .model import CONTROL_NODE_KINDS, Diagram, Edge, Node
+from .model import CHAIN_NODE_KINDS, CONTROL_NODE_KINDS, Diagram, Edge, Node
 from .provenance import footer, slug
 
 _RC = {
@@ -71,6 +74,18 @@ THEME = {
     "cs_process_model": ("#E3F2FD", "#1565C0"),
     "control_action": "#C62828",
     "feedback": "#1565C0",
+    # chains: the box kinds share one base, the status sets the colours
+    "event": ("#FFFFFF", "#37474F"),
+    "milestone": ("#FFFFFF", "#37474F"),
+    "gate": ("#FFFFFF", "#37474F"),
+    "external": ("#FAFAFA", "#546E7A"),
+    "status_done": ("#DCE5DC", "#5F7A5F"),
+    "status_active": ("#D6E6F7", "#2F6DB5"),
+    "status_blocked": ("#F4C2C2", "#B83232"),
+    "status_pending": ("#FFFFFF", "#37474F"),
+    "status_late": ("#FFE3A8", "#C98A1B"),
+    "chain_small": "#52606D",
+    "dim": 0.22,                 # opacity of what a ``focus`` rendering dims
     "lane_a": "#FAFBFC",
     "lane_b": "#F1F4F8",
     "lane_line": "#B8C2CC",
@@ -81,7 +96,7 @@ THEME = {
 
 def render(d: Diagram, png: str | None = None, svg: str | None = None,
            dpi: int = 160, theme: dict | None = None, provenance: bool = True,
-           name: str | None = None) -> Figure:
+           name: str | None = None, focus: str | None = None) -> Figure:
     """Draw a laid-out diagram.
 
     Writes ``png`` and/or ``svg`` when given (paths or file-like objects) and
@@ -93,10 +108,16 @@ def render(d: Diagram, png: str | None = None, svg: str | None = None,
     ("asi_escher <version>, <date>; layout shared with <name>.drawio", the
     draw.io file :func:`asi_escher.to_drawio` writes for the same layout);
     ``name`` defaults to the slug of the title.
+
+    ``focus`` names an event of a chain: it and its blockers (every event
+    that is not done on a chain of ``blocks`` edges upstream of it) are drawn
+    as usual, with the ``blocks`` edges between them, and everything else is
+    dimmed, so the blocker chain of that one event stands out.
     """
     th = dict(THEME)
     if theme:
         th.update(theme)
+    statuses, critical, lit_nodes, lit_edges = _chain_emphasis(d, focus)
     W, H = max(d.width, 120), max(d.height, 80)
     with matplotlib.rc_context(_RC):
         fig = Figure(figsize=(W / 100.0, H / 100.0), dpi=100)
@@ -110,12 +131,15 @@ def render(d: Diagram, png: str | None = None, svg: str | None = None,
 
         _draw_lanes(ax, d, th)
         _draw_frame(ax, d, th)
+        dim = float(th["dim"])
         for e in d.edges:
-            _draw_edge(ax, e, th)
+            _draw_edge(ax, e, th, thick=(e.src, e.dst) in critical,
+                       alpha=1.0 if lit_edges is None or (e.src, e.dst) in lit_edges else dim)
         for n in d.nodes.values():
-            _draw_node(ax, n, th)
+            _draw_node(ax, n, th, status=statuses.get(n.id, "pending"),
+                       alpha=1.0 if lit_nodes is None or n.id in lit_nodes else dim)
         for e in d.edges:
-            _draw_edge_label(ax, e, th)
+            _draw_edge_label(ax, e, th, alpha=1.0 if lit_edges is None or (e.src, e.dst) in lit_edges else dim)
         if provenance:
             _text(ax, 6, H - 5, footer(name or slug(d.title)), size=SMALL_PX - 2, color="#9E9E9E",
                   ha="left", va="bottom", italic=True)
@@ -128,11 +152,36 @@ def render(d: Diagram, png: str | None = None, svg: str | None = None,
 
 
 # ------------------------------------------------------------ helpers -----
+def _chain_emphasis(d: Diagram, focus: str | None):
+    """What a chain rendering needs beyond the geometry: the effective status
+    of every event, the edges of the critical path and, with ``focus``, the
+    lit nodes and edges (``None`` for both when nothing is dimmed)."""
+    if not any(n.kind in CHAIN_NODE_KINDS for n in d.nodes.values()):
+        if focus is not None:
+            raise ValueError("focus= needs a chain diagram")
+        return {}, set(), None, None
+    statuses = d.statuses()
+    critical = d.critical_edges()
+    if focus is None:
+        return statuses, critical, None, None
+    if focus not in d.nodes:
+        raise KeyError(f"unknown event {focus!r}")
+    lit = {focus, *d.blockers(focus)}
+    lit_edges = {(e.src, e.dst) for e in d.edges if e.kind == "blocks" and e.src in lit and e.dst in lit}
+    return statuses, critical, lit, lit_edges
+
+
+def _alpha_kw(alpha: float) -> dict:
+    """``alpha=`` for matplotlib only when something is dimmed, so an undimmed
+    drawing is the same bytes as before the option existed."""
+    return {"alpha": alpha} if alpha != 1.0 else {}
+
+
 def _text(ax, x, y, s, size=FONT_PX, color="#1F2933", ha="center", va="center",
-          bold=False, italic=False, bg=None, rotation=0):
-    kw = {}
+          bold=False, italic=False, bg=None, rotation=0, alpha=1.0):
+    kw = _alpha_kw(alpha)
     if bg:
-        kw["bbox"] = dict(boxstyle="round,pad=0.15", fc=bg, ec="none")
+        kw["bbox"] = dict(boxstyle="round,pad=0.15", fc=bg, ec="none", **_alpha_kw(alpha))
     return ax.text(x, y, s, fontsize=pt(size), color=color, ha=ha, va=va,
                    fontweight="bold" if bold else "normal",
                    fontstyle="italic" if italic else "normal",
@@ -174,9 +223,12 @@ def _draw_frame(ax, d, th):
 
 
 # -------------------------------------------------------------- nodes -----
-def _draw_node(ax, n: Node, th):
+def _draw_node(ax, n: Node, th, status: str = "pending", alpha: float = 1.0):
     k = n.kind
     if k == "dummy":
+        return
+    if k in CHAIN_NODE_KINDS:
+        _draw_chain_box(ax, n, status, th, alpha)
         return
     x, y, w, h = n.x, n.y, n.w, n.h
     fill, stroke = th.get(k, ("#F4F4F4", "#5F6B7A"))
@@ -275,6 +327,46 @@ def _draw_block(ax, n: Node, fill, stroke):
         cy += 4
 
 
+def _draw_chain_box(ax, n: Node, status: str, th, alpha: float = 1.0):
+    """A chain event: the status colours the box, the kind shapes it (a
+    rounded box for an event, pointed ends for a milestone, a double border
+    for a gate, a dashed border for an external event); the title in bold,
+    the owner, the due date and the note as small lines under it."""
+    x, y, w, h = n.x, n.y, n.w, n.h
+    left, top = x - w / 2, y - h / 2
+    fill, stroke = th.get("status_" + status, th["status_pending"])
+    fill = n.fill or fill
+    stroke = n.stroke or stroke
+    k = n.kind
+    z = 4
+    common = dict(fc=fill, ec=stroke, lw=1.5, zorder=z, **_alpha_kw(alpha))
+    if k == "milestone":
+        p = CHAIN_POINT
+        pts = [(left, y), (left + p, top), (left + w - p, top), (left + w, y),
+               (left + w - p, top + h), (left + p, top + h)]
+        ax.add_patch(Polygon(pts, closed=True, **common))
+    elif k == "gate":
+        i = CHAIN_GATE_INSET
+        ax.add_patch(Rectangle((left, top), w, h, **common))
+        ax.add_patch(Rectangle((left + i, top + i), w - 2 * i, h - 2 * i, fc="none", ec=stroke, lw=1.2,
+                               zorder=z + 1, **_alpha_kw(alpha)))
+    elif k == "external":
+        ax.add_patch(Rectangle((left, top), w, h, ls=(0, (6, 3)), **common))
+    else:
+        ax.add_patch(FancyBboxPatch((left, top), w, h, boxstyle="round,pad=0,rounding_size=7", **common))
+    title_lines = n.lines or [n.label]
+    subs = chain_sublines(n)
+    title_h = len(title_lines) * TITLE_PX * 1.35
+    block_h = title_h + ((3 + len(subs) * SMALL_PX * 1.3) if subs else 0.0)
+    cy = y - block_h / 2
+    for i, line in enumerate(title_lines):
+        _text(ax, x, cy + TITLE_PX * 0.7 + i * TITLE_PX * 1.35, line, size=TITLE_PX, bold=True, alpha=alpha)
+    cy += title_h + 3
+    for i, (kind, text) in enumerate(subs):
+        _text(ax, x, cy + SMALL_PX * 0.7 + i * SMALL_PX * 1.3, text, size=SMALL_PX, color=th["chain_small"],
+              italic=(kind == "note"), alpha=alpha)
+
+
 def _draw_control_box(ax, n: Node, fill, stroke, th):
     """A control-structure box: the title, then the responsibility, the
     algorithms (orange) and the process model (blue) as stacked sections.
@@ -329,7 +421,9 @@ def _draw_control_box(ax, n: Node, fill, stroke, th):
 
 
 # -------------------------------------------------------------- edges -----
-def _draw_edge(ax, e: Edge, th):
+def _draw_edge(ax, e: Edge, th, thick: bool = False, alpha: float = 1.0):
+    """Draw an edge; ``thick`` marks an edge of a chain's critical path and
+    ``alpha`` below 1 dims it (a ``focus`` rendering)."""
     if not e.points:
         return
     pts = list(e.points)
@@ -337,12 +431,15 @@ def _draw_edge(ax, e: Edge, th):
     ls = {"solid": "-", "dashed": (0, (5, 3)), "dotted": (0, (1.5, 2.5))}[e.style]
     if e.kind in DASHED_EDGE_KINDS:
         ls = (0, (5, 3))
-    lw = 1.5 if e.kind in ("control_action", "feedback") else 1.3
+    lw = {"control_action": 1.5, "feedback": 1.5, "blocks": 1.5, "enables": 0.9, "informs": 1.1}.get(e.kind, 1.3)
+    if thick:
+        lw *= 1.9
     head = {"flow": "filled", "dependency": "open", "satisfy": "open", "derive": "open",
             "verify": "open", "refine": "open", "allocate": "open", "generalization": "triangle",
             "composition": "none", "aggregation": "none", "association": "none",
             "connector": "none", "itemflow": "filled",
-            "control_action": "filled", "feedback": "filled"}[e.kind]
+            "control_action": "filled", "feedback": "filled",
+            "blocks": "filled", "enables": "filled", "informs": "open"}[e.kind]
     tail = {"composition": "fdiamond", "aggregation": "odiamond"}.get(e.kind, "none")
 
     # shorten line for decorations
@@ -351,7 +448,8 @@ def _draw_edge(ax, e: Edge, th):
     if tail != "none":
         pts[0] = _back_off(pts[1], pts[0], 15)
     xs, ys = zip(*pts, strict=True)
-    ax.plot(xs, ys, color=color, lw=lw, ls=ls, zorder=2, solid_capstyle="round", solid_joinstyle="round")
+    ax.plot(xs, ys, color=color, lw=lw, ls=ls, zorder=2, solid_capstyle="round", solid_joinstyle="round",
+            **_alpha_kw(alpha))
 
     # ports (IBD connectors)
     if e.src_port:
@@ -359,10 +457,11 @@ def _draw_edge(ax, e: Edge, th):
     if e.dst_port:
         _port(ax, e.points[-1], e.dst_port, th, e.points[-2])
 
+    size = 13.0 if thick else 11.0
     if head == "filled":
-        _arrow(ax, e.points[-2], e.points[-1], color, filled=True)
+        _arrow(ax, e.points[-2], e.points[-1], color, filled=True, size=size, alpha=alpha)
     elif head == "open":
-        _arrow(ax, e.points[-2], e.points[-1], color, filled=False)
+        _arrow(ax, e.points[-2], e.points[-1], color, filled=False, size=size, alpha=alpha)
     elif head == "triangle":
         _triangle(ax, e.points[-2], e.points[-1], color)
     if tail == "fdiamond":
@@ -371,7 +470,7 @@ def _draw_edge(ax, e: Edge, th):
         _diamond(ax, e.points[1], e.points[0], color, filled=False)
 
 
-def _draw_edge_label(ax, e: Edge, th):
+def _draw_edge_label(ax, e: Edge, th, alpha: float = 1.0):
     """Draw the label where :func:`asi_escher.layout` placed it.
 
     The text is the same :func:`~asi_escher.metrics.edge_label` the layout
@@ -385,7 +484,8 @@ def _draw_edge_label(ax, e: Edge, th):
         return
     x, y = e.label_pos
     color = th[e.kind] if e.kind in ("control_action", "feedback") else th["ink"]
-    _text(ax, x, y, label, size=SMALL_PX, color=color, ha=e.label_ha, va=e.label_va, bg=th["label_bg"])
+    _text(ax, x, y, label, size=SMALL_PX, color=color, ha=e.label_ha, va=e.label_va, bg=th["label_bg"],
+          alpha=alpha)
 
 
 def _unit(a, b):
@@ -399,7 +499,7 @@ def _back_off(a, b, dist):
     return (b[0] - ux * dist, b[1] - uy * dist)
 
 
-def _arrow(ax, a, b, color, filled=True, size=11.0):
+def _arrow(ax, a, b, color, filled=True, size=11.0, alpha=1.0):
     ux, uy = _unit(a, b)
     px, py = -uy, ux
     tip = b
@@ -407,9 +507,9 @@ def _arrow(ax, a, b, color, filled=True, size=11.0):
     lt = (base[0] + px * size * 0.42, base[1] + py * size * 0.42)
     r = (base[0] - px * size * 0.42, base[1] - py * size * 0.42)
     if filled:
-        ax.add_patch(Polygon([tip, lt, r], closed=True, fc=color, ec=color, lw=1.0, zorder=3))
+        ax.add_patch(Polygon([tip, lt, r], closed=True, fc=color, ec=color, lw=1.0, zorder=3, **_alpha_kw(alpha)))
     else:
-        ax.plot([lt[0], tip[0], r[0]], [lt[1], tip[1], r[1]], color=color, lw=1.3, zorder=3)
+        ax.plot([lt[0], tip[0], r[0]], [lt[1], tip[1], r[1]], color=color, lw=1.3, zorder=3, **_alpha_kw(alpha))
 
 
 def _triangle(ax, a, b, color, size=14.0):
