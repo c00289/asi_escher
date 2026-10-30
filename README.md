@@ -180,8 +180,8 @@ reports) just above the nearest box it hears from, and the environment at
 the bottom beside the controlled process. A control action between two
 peers is a request, not a step down: when the sender's every other control
 action reaches past the receiver's own subordinates into the receiver's
-domain (a field operator asking the control-room operator for a stop while
-commanding the vehicle controller and the machine directly), the two stay
+domain (one operator asking another for a stop while itself commanding the
+controllers and the process further down), the two stay
 on one tier and the arrow runs horizontally between them, its answer
 beneath it. Between two tiers the control action keeps to the left of a
 pair of arrows and the feedback to the right; each arrow jogs just under
